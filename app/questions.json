@@ -1,0 +1,128 @@
+[
+  {
+    "id": "dsa-1",
+    "topic": "DSA",
+    "text": "Explain how a hash map works, and what happens when two keys collide.",
+    "ideal_answer": "A hash map applies a hash function to a key to produce an index into an array of buckets. Lookups, inserts and deletes are average case O(1). Collisions happen when two keys hash to the same bucket, and are resolved by separate chaining with a linked list or tree, or by open addressing such as linear probing. When the load factor grows too high the table is resized and all entries are rehashed, which makes worst case operations O(n)."
+  },
+  {
+    "id": "dsa-2",
+    "topic": "DSA",
+    "text": "You need the k largest elements from a very large stream of numbers. What do you use and why?",
+    "ideal_answer": "Keep a min heap of size k. For each incoming element, push it and pop the smallest whenever the heap exceeds k, so the heap always holds the k largest seen so far. Time is O(n log k) and space is O(k), which matters because the stream does not fit in memory. Sorting everything is O(n log n) and needs all the data at once. Quickselect is O(n) average if the data is in memory but is not a streaming solution."
+  },
+  {
+    "id": "dsa-3",
+    "topic": "DSA",
+    "text": "How do you detect a cycle in a linked list, and how do you find where the cycle starts?",
+    "ideal_answer": "Use Floyd's tortoise and hare algorithm. Move a slow pointer one step and a fast pointer two steps at a time. If they ever meet there is a cycle, if fast reaches null there is none. To find the start of the cycle, reset one pointer to the head and advance both one step at a time, they meet at the cycle entry. Time is O(n) and space is O(1), which beats a hash set of visited nodes that costs O(n) space."
+  },
+  {
+    "id": "dsa-4",
+    "topic": "DSA",
+    "text": "When would you use dynamic programming, and how do you recognise a problem that needs it?",
+    "ideal_answer": "Dynamic programming applies when a problem has overlapping subproblems and optimal substructure, meaning the optimal answer is built from optimal answers to smaller instances that repeat. You define a state, write a recurrence over it, then either memoize the recursion top down or fill a table bottom up. Recognising it usually means noticing that a naive recursion recomputes the same arguments, giving exponential time that collapses to polynomial once results are cached."
+  },
+  {
+    "id": "sd-1",
+    "topic": "System Design",
+    "text": "Design a URL shortener like bit.ly. Walk me through the main components.",
+    "ideal_answer": "The write path takes a long URL, generates a unique short key using an id counter encoded in base62 or a hash with collision checks, and stores the mapping in a database. The read path looks up the key and issues an HTTP redirect. The workload is extremely read heavy, so a cache like Redis sits in front of the database and holds hot keys. The key value store shards by short key. Extra concerns include custom aliases, expiry, rate limiting and click analytics written asynchronously to a queue."
+  },
+  {
+    "id": "sd-2",
+    "topic": "System Design",
+    "text": "What is the difference between horizontal and vertical scaling, and how does that change your design?",
+    "ideal_answer": "Vertical scaling means moving to a bigger machine, which is simple but has a hard ceiling, costs more per unit of capacity and leaves a single point of failure. Horizontal scaling means adding more machines behind a load balancer, which scales further and improves availability, but forces the application to be stateless so any node can serve any request. That pushes session state into a shared store or a token, and pushes data into replicated or sharded storage, which introduces consistency and rebalancing problems."
+  },
+  {
+    "id": "sd-3",
+    "topic": "System Design",
+    "text": "Explain the CAP theorem and what tradeoff you would actually make for a payments system.",
+    "ideal_answer": "CAP says that during a network partition a distributed system must choose between consistency and availability, since partition tolerance is not optional in a real network. An AP system keeps serving requests but can return stale data, which suits feeds or caches. A CP system rejects requests it cannot serve safely. For payments you choose consistency, because double spending or losing a transaction is far worse than a short outage, so you use strongly consistent storage, transactions and idempotency keys and accept refusing writes during a partition."
+  },
+  {
+    "id": "sd-4",
+    "topic": "System Design",
+    "text": "How would you design a rate limiter for a public API?",
+    "ideal_answer": "Pick an algorithm first. Fixed window counters are simplest but allow bursts at window edges, sliding window log or sliding window counter smooths that out, and token bucket allows controlled bursts while capping the average rate. Counters live in a shared store such as Redis keyed by user or API key, updated atomically so multiple gateway nodes agree. Exceeded requests return HTTP 429 with a Retry-After header. Concerns include clock skew, hot keys, and failing open or closed when the store is unavailable."
+  },
+  {
+    "id": "be-1",
+    "topic": "Backend",
+    "text": "What is the difference between SQL and NoSQL databases, and when do you pick each?",
+    "ideal_answer": "SQL databases are relational with a fixed schema, support joins and give strong ACID transactions, which fits data with clear relationships and correctness requirements like orders or accounts. NoSQL covers document, key value, wide column and graph stores that relax the schema and usually the transactional guarantees in exchange for easier horizontal scaling and flexible or denormalized shapes. You pick NoSQL for very high write volume, unstructured data or access patterns known in advance, and SQL when you need ad hoc queries and integrity."
+  },
+  {
+    "id": "be-2",
+    "topic": "Backend",
+    "text": "Walk me through what happens between a client sending an HTTP request and receiving a response.",
+    "ideal_answer": "The client resolves the hostname over DNS, opens a TCP connection with a three way handshake and negotiates TLS. The request reaches a load balancer or reverse proxy which terminates TLS and forwards it to an application server. The framework routes the path to a handler, running middleware for authentication, logging and parsing along the way. The handler queries a cache or database, builds a response, and the server returns a status code, headers and body back down the same connection, which may be reused via keep alive."
+  },
+  {
+    "id": "be-3",
+    "topic": "Backend",
+    "text": "How do you keep an API idempotent, and why does it matter?",
+    "ideal_answer": "An idempotent endpoint produces the same result when the same request is applied more than once. It matters because clients retry after network timeouts without knowing whether the first attempt succeeded, so a naive create would charge or insert twice. GET, PUT and DELETE are naturally idempotent, POST is not, so the client sends an idempotency key that the server stores with the result of the first attempt and replays for duplicates. A unique constraint on that key in the database enforces it even under concurrency."
+  },
+  {
+    "id": "be-4",
+    "topic": "Backend",
+    "text": "Your API endpoint suddenly got slow in production. How do you debug it?",
+    "ideal_answer": "Start with what changed, such as a recent deploy, traffic increase or data growth, and be ready to roll back. Look at metrics and latency percentiles rather than averages to see whether all requests or only the tail regressed. Use distributed tracing to find which span dominates, then drill in, most often a slow or unindexed database query, an N plus one pattern, a cache with a dropped hit rate, or contention on a lock or connection pool. Confirm with a profiler or query plan before changing code, and add an alert so it is caught earlier next time."
+  },
+  {
+    "id": "fe-1",
+    "topic": "Frontend",
+    "text": "Explain the browser event loop, and how async code fits into it.",
+    "ideal_answer": "JavaScript runs on a single thread with a call stack. When the stack empties, the event loop takes the next callback from a queue and runs it. Promise callbacks go on the microtask queue, which is drained completely after every task, while timers and I O callbacks are macrotasks that run one per iteration. Rendering happens between tasks, so any long synchronous work blocks both the queue and painting, which is why heavy computation moves to a web worker or is split into chunks."
+  },
+  {
+    "id": "fe-2",
+    "topic": "Frontend",
+    "text": "How would you make a slow web page load faster?",
+    "ideal_answer": "Measure first with Lighthouse or real user monitoring to find whether the problem is network, JavaScript execution or rendering. Common wins are shrinking the JavaScript bundle with code splitting and lazy loading routes, serving assets from a CDN with long cache headers and compression, optimising and correctly sizing images with modern formats and lazy loading below the fold, and removing render blocking CSS and scripts from the critical path. Then check server response time and consider prefetching or server rendering for the first paint."
+  },
+  {
+    "id": "fe-3",
+    "topic": "Frontend",
+    "text": "What is the virtual DOM, and does it actually make things faster?",
+    "ideal_answer": "The virtual DOM is an in memory tree describing the intended UI. On a state change the framework builds a new tree, diffs it against the previous one during reconciliation, and applies the minimal set of real DOM operations in a batch, using keys to match list items. It is not automatically faster than hand written DOM updates, and a careful direct update can win, since diffing itself costs work. Its real value is that it makes declarative code with predictable performance possible, avoiding accidental layout thrashing from many separate reads and writes."
+  },
+  {
+    "id": "ml-1",
+    "topic": "ML / Data Science",
+    "text": "Explain the bias variance tradeoff and how you would tell which one your model suffers from.",
+    "ideal_answer": "Bias is error from an overly simple model that cannot capture the pattern, variance is error from a model too sensitive to the particular training sample. High bias shows up as high training error and validation error close to it, which is underfitting and is fixed by more capacity or better features. High variance shows up as low training error with a large gap to validation error, which is overfitting and is fixed by regularisation, more data, simpler models or ensembling. Learning curves make the diagnosis explicit."
+  },
+  {
+    "id": "ml-2",
+    "topic": "ML / Data Science",
+    "text": "Your classifier has 98% accuracy on a fraud dataset. Is it good? How do you evaluate it properly?",
+    "ideal_answer": "Probably not, because fraud is heavily imbalanced and a model predicting no fraud for everything can reach 98% accuracy while catching nothing. You need the confusion matrix and then precision, recall and F1 on the positive class, plus a precision recall curve which is more informative than ROC AUC under strong imbalance. The right operating threshold depends on the business cost of a false negative, a missed fraud, versus a false positive, a blocked legitimate customer, so you tune the threshold against that cost rather than accepting the default."
+  },
+  {
+    "id": "ml-3",
+    "topic": "ML / Data Science",
+    "text": "What is cross validation and why not just use a single train test split?",
+    "ideal_answer": "Cross validation splits the data into k folds, trains on k minus one and validates on the remaining fold, rotating through and averaging the scores. A single split gives one noisy estimate that depends on which rows happened to land in validation, which is especially unreliable on small data. Stratified folds preserve class balance. Because tuning against validation folds leaks information, you keep a separate held out test set for the final estimate, and fit preprocessing inside each fold to avoid leaking statistics across folds."
+  },
+  {
+    "id": "bh-1",
+    "topic": "Behavioral",
+    "text": "Tell me about a time you disagreed with a teammate. How did you handle it?",
+    "ideal_answer": "A strong answer uses a concrete example with the STAR structure. It sets up the situation and the actual technical or process disagreement, explains understanding the other person's reasoning rather than dismissing it, describes resolving it with data, a prototype, a written comparison of tradeoffs or escalation to a shared owner, and states the outcome including whether the answer turned out to be the other person's. It ends with a specific lesson about communication, and stays respectful rather than blaming the teammate."
+  },
+  {
+    "id": "bh-2",
+    "topic": "Behavioral",
+    "text": "Tell me about a project you are proud of. What was your specific contribution?",
+    "ideal_answer": "A strong answer gives brief context on the project and why it mattered, then focuses on the speaker's own role and decisions rather than what the team did, using I more than we. It names the hardest technical problem, how it was approached and what alternatives were rejected, and gives concrete impact, ideally measurable such as users served, latency reduced or time saved. It closes with honest reflection on what would be done differently, which signals self awareness without undercutting the achievement."
+  },
+  {
+    "id": "bh-3",
+    "topic": "Behavioral",
+    "text": "Tell me about a time you failed or shipped a bug. What happened?",
+    "ideal_answer": "A strong answer picks a real failure with actual consequences instead of a disguised humblebrag, and takes ownership without blaming teammates, the process or the deadline. It describes noticing the problem, communicating it early, containing the impact, then finding the root cause rather than patching the symptom. It ends with the systemic prevention that followed, such as a regression test, an alert, a review checklist or a rollback path, and a clear statement of what the speaker changed in their own habits afterwards."
+  }
+]

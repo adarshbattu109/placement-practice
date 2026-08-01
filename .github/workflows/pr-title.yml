@@ -1,0 +1,70 @@
+name: PR Title Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title follows conventional commits
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "PR title: $TITLE"
+
+          PATTERN="^(feat|fix|perf|refactor|docs|style|test|build|ci|chore)(\(.+\))?(!)?: .+"
+
+          if [[ "$TITLE" =~ $PATTERN ]]; then
+            TYPE="${BASH_REMATCH[1]}"
+            BREAKING="${BASH_REMATCH[3]}"
+
+            if [ -n "$BREAKING" ]; then
+              echo "✅ Valid PR title — type: $TYPE (BREAKING CHANGE)"
+            else
+              echo "✅ Valid PR title — type: $TYPE"
+            fi
+
+            case "$TYPE" in
+              feat)
+                echo "📦 This will trigger a MINOR version bump"
+                ;;
+              fix|perf|refactor)
+                echo "📦 This will trigger a PATCH version bump"
+                ;;
+              *)
+                echo "📦 This will NOT trigger a version bump"
+                ;;
+            esac
+
+            if [ -n "$BREAKING" ]; then
+              echo "⚠️  Breaking change — will trigger a MAJOR version bump"
+            fi
+          else
+            echo "❌ Invalid PR title format"
+            echo ""
+            echo "Expected: <type>(<optional scope>): <description>"
+            echo ""
+            echo "Valid types:"
+            echo "  feat:      New feature (MINOR bump)"
+            echo "  fix:       Bug fix (PATCH bump)"
+            echo "  perf:      Performance improvement (PATCH bump)"
+            echo "  refactor:  Code refactor (PATCH bump)"
+            echo "  docs:      Documentation (no bump)"
+            echo "  style:     Code style (no bump)"
+            echo "  test:      Tests (no bump)"
+            echo "  build:     Build system (no bump)"
+            echo "  ci:        CI config (no bump)"
+            echo "  chore:     Maintenance (no bump)"
+            echo ""
+            echo "Examples:"
+            echo "  feat: add telephonic interview mode"
+            echo "  fix(api): gate silent recordings before calling ASR"
+            echo "  feat!: change the /submit response shape"
+            exit 1
+          fi

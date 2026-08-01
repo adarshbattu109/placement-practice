@@ -1,0 +1,150 @@
+name: Version Bump
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-bump-${{ github.head_ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if latest commit is already a version bump
+        id: skip
+        run: |
+          LAST_MSG=$(git log -1 --format="%s")
+          if [[ "$LAST_MSG" == chore\(release\):* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Latest commit is already a version bump — skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine version bump type from PR title
+        if: steps.skip.outputs.skip == 'false'
+        id: bump_type
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "PR title: $TITLE"
+
+          # Validate conventional commit format
+          PATTERN="^(feat|fix|perf|refactor|docs|style|test|build|ci|chore)(\(.+\))?(!)?: .+"
+          if [[ ! "$TITLE" =~ $PATTERN ]]; then
+            echo "type=none" >> "$GITHUB_OUTPUT"
+            echo "PR title does not match conventional commit format — skipping"
+            exit 0
+          fi
+
+          TYPE="${BASH_REMATCH[1]}"
+          BREAKING="${BASH_REMATCH[3]}"
+
+          if [ -n "$BREAKING" ]; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+            echo "Breaking change detected — MAJOR bump"
+          elif [ "$TYPE" = "feat" ]; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+            echo "Feature — MINOR bump"
+          elif [[ "$TYPE" =~ ^(fix|perf|refactor)$ ]]; then
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+            echo "Fix/perf/refactor — PATCH bump"
+          else
+            echo "type=none" >> "$GITHUB_OUTPUT"
+            echo "Type '$TYPE' does not trigger a version bump"
+          fi
+
+      - name: Calculate new version
+        if: steps.skip.outputs.skip == 'false' && steps.bump_type.outputs.type != 'none'
+        id: version
+        run: |
+          CURRENT_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Current version: $CURRENT_VERSION"
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+          BUMP_TYPE="${{ steps.bump_type.outputs.type }}"
+
+          case "$BUMP_TYPE" in
+            major) NEW_VERSION="$((MAJOR+1)).0.0" ;;
+            minor) NEW_VERSION="$MAJOR.$((MINOR+1)).0" ;;
+            patch) NEW_VERSION="$MAJOR.$MINOR.$((PATCH+1))" ;;
+          esac
+
+          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "New version: $NEW_VERSION"
+
+      - name: Check for version conflict with main
+        if: steps.skip.outputs.skip == 'false' && steps.bump_type.outputs.type != 'none'
+        id: conflict
+        run: |
+          # Get the version currently on main
+          MAIN_VERSION=$(git show origin/main:pyproject.toml | grep '^version = ' | sed 's/version = "\(.*\)"/\1/')
+          echo "Main branch version: $MAIN_VERSION"
+
+          NEW_VERSION="${{ steps.version.outputs.new }}"
+          CURRENT_VERSION="${{ steps.version.outputs.current }}"
+
+          # If main has moved ahead (someone else merged), recalculate from main's version
+          if [ "$MAIN_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "⚠️  Version conflict: branch has $CURRENT_VERSION but main has $MAIN_VERSION"
+            echo "Recalculating from main version..."
+
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$MAIN_VERSION"
+            BUMP_TYPE="${{ steps.bump_type.outputs.type }}"
+
+            case "$BUMP_TYPE" in
+              major) NEW_VERSION="$((MAJOR+1)).0.0" ;;
+              minor) NEW_VERSION="$MAJOR.$((MINOR+1)).0" ;;
+              patch) NEW_VERSION="$MAJOR.$MINOR.$((PATCH+1))" ;;
+            esac
+
+            echo "Recalculated version: $NEW_VERSION"
+          fi
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check if version already correct
+        if: steps.skip.outputs.skip == 'false' && steps.bump_type.outputs.type != 'none'
+        id: check
+        run: |
+          CURRENT_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          TARGET_VERSION="${{ steps.conflict.outputs.version }}"
+
+          if [ "$CURRENT_VERSION" = "$TARGET_VERSION" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Version already at $TARGET_VERSION — no update needed"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Will update: $CURRENT_VERSION → $TARGET_VERSION"
+          fi
+
+      - name: Update version in pyproject.toml
+        if: steps.skip.outputs.skip == 'false' && steps.bump_type.outputs.type != 'none' && steps.check.outputs.needed == 'true'
+        run: |
+          NEW_VERSION="${{ steps.conflict.outputs.version }}"
+          sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
+          echo "Updated pyproject.toml to version $NEW_VERSION"
+          grep '^version = ' pyproject.toml
+
+      - name: Commit and push version bump
+        if: steps.skip.outputs.skip == 'false' && steps.bump_type.outputs.type != 'none' && steps.check.outputs.needed == 'true'
+        run: |
+          NEW_VERSION="${{ steps.conflict.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore(release): bump version to $NEW_VERSION"
+          git push

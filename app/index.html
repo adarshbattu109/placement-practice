@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Booth — mock interview practice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0d1020;          /* deep indigo ground */
+    --panel: #161a30;
+    --panel-hi: #1e2340;
+    --seam: #2b3157;
+    --amber: #ffb340;
+    --amber-dim: #7a5420;
+    --paper: #eceafc;
+    --paper-dim: #9aa0c8;
+    --live: #ff5d47;         /* recording */
+    --pass: #6fe3a8;         /* interview live, and a good score */
+
+    --display: 'Bricolage Grotesque', system-ui, sans-serif;
+    --body: 'Inter', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--ink); color: var(--paper);
+    font: 400 16px/1.6 var(--body);
+    background-image: radial-gradient(120% 80% at 82% -10%, rgba(255,179,64,.10), transparent 55%);
+    background-attachment: fixed;
+  }
+  .wrap { max-width: 60rem; margin: 0 auto; padding: clamp(1.25rem, 4vw, 3rem) clamp(1rem, 4vw, 2rem) 5rem; }
+
+  /* ── Channel strip header ───────────────────────────────────────── */
+  .strip {
+    display: flex; align-items: center; gap: .9rem; flex-wrap: wrap;
+    padding-bottom: 1rem; border-bottom: 1px solid var(--seam); margin-bottom: clamp(1.75rem, 4vw, 2.75rem);
+  }
+  .mark { font-family: var(--display); font-weight: 800; font-size: 1.05rem; letter-spacing: -.02em; }
+  .mark em { font-style: normal; color: var(--amber); }
+  .mono-label { font: 500 .7rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--paper-dim); }
+  .who { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
+  .who .name { font-family: var(--display); font-weight: 600; font-size: .95rem; }
+  .who .badge {
+    width: 1.9rem; height: 1.9rem; border-radius: 50%; display: grid; place-items: center;
+    background: var(--amber); color: #20160a; font: 800 .8rem/1 var(--display);
+  }
+  /* Standby lamp: dim → green once the interview is live → red while recording. */
+  .lamp { display: flex; align-items: center; gap: .5rem; font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--paper-dim); }
+  .lamp::before { content: ''; width: .5rem; height: .5rem; border-radius: 50%; background: var(--amber-dim); transition: background .25s, box-shadow .25s; }
+  body[data-phase="live"] .lamp { color: var(--pass); }
+  body[data-phase="live"] .lamp::before { background: var(--pass); box-shadow: 0 0 0 4px rgba(111,227,168,.18); animation: pulse 2.4s ease-in-out infinite; }
+  body[data-phase="recording"] .lamp { color: var(--live); }
+  body[data-phase="recording"] .lamp::before { background: var(--live); box-shadow: 0 0 0 4px rgba(255,93,71,.18); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  /* ── Views ──────────────────────────────────────────────────────── */
+  .view[hidden] { display: none; }
+  .crumb { display: flex; align-items: center; gap: .6rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  .crumb button {
+    background: none; border: 0; padding: 0; cursor: pointer; color: var(--paper-dim);
+    font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+  }
+  .crumb button:hover { color: var(--amber); }
+
+  h1.big {
+    font-family: var(--display); font-weight: 600; letter-spacing: -.03em; line-height: 1.08;
+    font-size: clamp(1.9rem, 5.5vw, 3.2rem); margin: 0 0 .6rem; text-wrap: balance;
+  }
+  .lede { color: var(--paper-dim); margin: 0 0 2rem; max-width: 34rem; }
+
+  /* ── Login ──────────────────────────────────────────────────────── */
+  .gate { max-width: 24rem; margin: clamp(2rem, 10vh, 6rem) auto 0; }
+  .field { display: grid; gap: .4rem; margin-bottom: 1rem; }
+  .field label { font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--paper-dim); }
+  input[type=text], input[type=password] {
+    font: inherit; color: var(--paper); background: var(--panel); border: 1px solid var(--seam);
+    border-radius: 10px; padding: .7rem .9rem; width: 100%;
+  }
+  input:focus { border-color: var(--amber); outline: none; }
+  .hint { font-size: .8rem; color: var(--paper-dim); margin: 1rem 0 0; }
+
+  /* ── Mode blocks (dashboard) ────────────────────────────────────── */
+  .modes { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .mode {
+    position: relative; text-align: left; cursor: pointer; display: grid; gap: .6rem;
+    background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+    border: 1px solid var(--seam); border-radius: 16px; padding: 1.4rem; color: var(--paper);
+    font: inherit; transition: border-color .18s, transform .18s;
+  }
+  .mode:hover:not(:disabled) { border-color: var(--amber); transform: translateY(-2px); }
+  .mode:disabled { cursor: not-allowed; opacity: .42; }
+  .mode h3 { font-family: var(--display); font-weight: 600; font-size: 1.3rem; letter-spacing: -.02em; margin: 0; }
+  .mode p { margin: 0; font-size: .875rem; color: var(--paper-dim); }
+  .mode .tier {
+    position: absolute; top: 1.1rem; right: 1.1rem;
+    font: 500 .62rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    padding: .3rem .5rem; border-radius: 999px; border: 1px solid var(--amber-dim); color: var(--amber);
+  }
+  .mode:disabled .tier { border-color: var(--seam); color: var(--paper-dim); }
+  .mode .flow { font: 400 .72rem/1.5 var(--mono); color: var(--paper-dim); }
+
+  /* ── Topic cards ────────────────────────────────────────────────── */
+  .topics { display: grid; gap: .8rem; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); margin-bottom: 2.5rem; }
+  .topic {
+    position: relative; text-align: left; cursor: pointer; font: inherit; color: var(--paper);
+    background: var(--panel); border: 1px solid var(--seam); border-radius: 14px;
+    padding: 1.1rem; display: grid; gap: .3rem; transition: border-color .18s, background .18s, transform .18s;
+  }
+  .topic:hover { border-color: var(--amber); transform: translateY(-2px); }
+  .topic[aria-pressed="true"] { border-color: var(--amber); background: rgba(255,179,64,.09); }
+  .topic strong { font-family: var(--display); font-weight: 600; font-size: 1.08rem; letter-spacing: -.02em; }
+  .topic .n { font: 500 .68rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--paper-dim); }
+  .topic[aria-pressed="true"] .n { color: var(--amber); }
+  .topic.every { border-style: dashed; }
+
+  /* ── Expertise slider: 3 anchor points ──────────────────────────── */
+  .dial { max-width: 30rem; margin-bottom: 2.25rem; }
+  .rail { position: relative; padding: .4rem 0 .2rem; }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; width: 100%; background: transparent;
+    margin: 0; display: block; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 2px;
+    background: linear-gradient(90deg, var(--amber-dim), var(--amber));
+  }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--seam); }
+  input[type=range]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--amber); }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; margin-top: -8px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--amber); border: 3px solid var(--ink); box-shadow: 0 0 0 1px var(--amber);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--amber); border: 3px solid var(--ink); box-shadow: 0 0 0 1px var(--amber);
+  }
+  input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 1px var(--amber), 0 0 0 5px rgba(255,179,64,.28); }
+  /* the three anchor points, sitting on the rail */
+  .notches { position: absolute; inset: .4rem 10px auto 10px; height: 4px; pointer-events: none; }
+  .notches i { position: absolute; top: -3px; width: 2px; height: 10px; background: var(--ink); transform: translateX(-1px); }
+  .notches i:nth-child(1) { left: 0; }
+  .notches i:nth-child(2) { left: 50%; }
+  .notches i:nth-child(3) { left: 100%; }
+  .anchors { display: flex; justify-content: space-between; margin-top: .7rem; }
+  .anchors button {
+    background: none; border: 0; padding: 0; cursor: pointer; text-align: center;
+    font: 500 .7rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--paper-dim);
+    transition: color .18s;
+  }
+  .anchors button:first-child { text-align: left; }
+  .anchors button:last-child { text-align: right; }
+  .anchors button[aria-current="true"] { color: var(--amber); }
+  .anchors button:hover { color: var(--paper); }
+  .dial .blurb { margin: 1.1rem 0 0; font-size: .9rem; color: var(--paper-dim); min-height: 3.2em; }
+
+  /* ── Buttons ────────────────────────────────────────────────────── */
+  button { font-family: inherit; font-size: inherit; }
+  .key, .ghost {
+    display: inline-flex; align-items: center; justify-content: center; gap: .55rem;
+    border-radius: 10px; padding: .7rem 1.1rem; cursor: pointer; font-weight: 600; font-size: .9rem;
+    border: 1px solid var(--seam); background: #10142a; color: var(--paper);
+    transition: transform .12s, border-color .18s, background .18s, color .18s, box-shadow .18s;
+  }
+  .ghost { font-weight: 400; background: var(--panel); }
+  .key:hover:not(:disabled), .ghost:hover:not(:disabled) { border-color: var(--amber); }
+  .key:active:not(:disabled) { transform: translateY(1px); }
+  .key:disabled, .ghost:disabled { opacity: .35; cursor: not-allowed; }
+  .key.arm { background: var(--live); border-color: var(--live); color: #fff; }
+  .key.arm:hover:not(:disabled) { box-shadow: 0 0 0 4px rgba(255,93,71,.16); border-color: var(--live); }
+  .key.go { background: var(--amber); border-color: var(--amber); color: #20160a; }
+  .key.go:hover:not(:disabled) { box-shadow: 0 0 0 4px rgba(255,179,64,.16); border-color: var(--amber); }
+  .key.wide { width: 100%; padding: 1rem; font-size: 1rem; }
+  .dot { width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; }
+
+  /* ── Interview ──────────────────────────────────────────────────── */
+  .qcard {
+    background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+    border: 1px solid var(--seam); border-radius: 16px; padding: clamp(1.25rem, 3.5vw, 2rem); margin-bottom: 1.25rem;
+  }
+  .qmeta { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .chip {
+    font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--amber); border: 1px solid var(--amber-dim); border-radius: 999px; padding: .4rem .7rem;
+  }
+  .count { font: 400 .7rem/1 var(--mono); letter-spacing: .1em; color: var(--paper-dim); }
+  #question {
+    font-family: var(--display); font-weight: 600; letter-spacing: -.025em; line-height: 1.14;
+    font-size: clamp(1.35rem, 3.6vw, 2.1rem); margin: 0; text-wrap: balance;
+  }
+  .console {
+    background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+    border: 1px solid var(--seam); border-radius: 16px; padding: clamp(1.1rem, 3vw, 1.5rem);
+    display: grid; gap: 1rem;
+  }
+  .deck { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  .clock { margin-left: auto; font: 500 1.05rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--paper-dim); }
+  body[data-phase="recording"] .clock { color: var(--paper); }
+  /* signature: 24-segment level ladder driven by live mic input */
+  .vu { display: flex; gap: 3px; height: 2.5rem; align-items: flex-end; }
+  .vu i { flex: 1; border-radius: 2px; background: var(--seam); height: 28%; transition: height .09s ease-out, background .09s; }
+  .scale { display: flex; justify-content: space-between; font: 400 .62rem/1 var(--mono); letter-spacing: .1em; color: var(--paper-dim); text-transform: uppercase; }
+  audio { width: 100%; height: 2.2rem; }
+  .status { margin: 0; font-size: .875rem; color: var(--paper-dim); min-height: 1.4rem; }
+  .status[data-tone="bad"] { color: var(--live); }
+  .status[data-tone="good"] { color: var(--pass); }
+
+  /* question navigator — answered state at a glance */
+  .nav { display: flex; gap: .35rem; flex-wrap: wrap; margin-bottom: 1.25rem; align-items: center; }
+  .nav button {
+    width: 2.1rem; height: 2.1rem; border-radius: 8px; cursor: pointer; padding: 0;
+    background: var(--panel); border: 1px solid var(--seam); color: var(--paper-dim);
+    font: 500 .78rem/1 var(--mono); transition: border-color .18s, color .18s, background .18s;
+  }
+  .nav button:hover { border-color: var(--amber); color: var(--paper); }
+  .nav button[data-done="true"] { color: var(--pass); border-color: rgba(111,227,168,.45); background: rgba(111,227,168,.08); }
+  .nav button[aria-current="true"] { border-color: var(--amber); color: var(--amber); background: rgba(255,179,64,.1); }
+  .nav .legend { font: 400 .68rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--paper-dim); margin-left: auto; }
+
+  /* the end-of-interview action sits apart from the per-question deck */
+  .finish {
+    margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px dashed var(--seam);
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  }
+  .finish p { margin: 0; font-size: .85rem; color: var(--paper-dim); }
+
+  /* ── Confirm dialog ─────────────────────────────────────────────── */
+  dialog {
+    border: 1px solid var(--seam); border-radius: 16px; padding: clamp(1.4rem, 4vw, 2rem);
+    background: var(--panel); color: var(--paper); max-width: 30rem; width: calc(100% - 2rem);
+    font: inherit; box-shadow: 0 24px 60px rgba(0,0,0,.5);
+  }
+  dialog::backdrop { background: rgba(7,9,20,.72); backdrop-filter: blur(2px); }
+  dialog h3 { font-family: var(--display); font-weight: 600; font-size: 1.5rem; letter-spacing: -.02em; margin: 0 0 .6rem; }
+  dialog p { margin: 0 0 1rem; color: var(--paper-dim); font-size: .92rem; }
+  .tally { display: grid; gap: .4rem; margin: 0 0 1.4rem; padding: .9rem 1.1rem; background: var(--ink); border-radius: 10px; }
+  .tally div { display: flex; justify-content: space-between; font: 500 .78rem/1.6 var(--mono); }
+  .tally div span:last-child { color: var(--paper); }
+  .tally .warn span:last-child { color: var(--live); }
+  dialog menu { display: flex; gap: .6rem; justify-content: flex-end; margin: 0; padding: 0; flex-wrap: wrap; }
+
+  /* ── Grading progress ───────────────────────────────────────────── */
+  .grading { max-width: 34rem; }
+  .bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin: 1.5rem 0 .8rem; }
+  .bar span { display: block; height: 100%; width: 0; background: var(--amber); border-radius: 3px; transition: width .4s ease-out; }
+
+  /* ── Report ─────────────────────────────────────────────────────── */
+  .report { display: grid; gap: 1.75rem; }
+  .sheet-head { display: none; }         /* print-only header */
+  .verdict { display: flex; align-items: flex-end; gap: 1.25rem; flex-wrap: wrap; padding-bottom: 1.25rem; border-bottom: 1px solid var(--seam); }
+  .verdict .num { font-family: var(--display); font-weight: 800; font-size: clamp(3.5rem, 12vw, 5.5rem); line-height: .85; letter-spacing: -.04em; }
+  .verdict .of { font: 400 .8rem/1 var(--mono); color: var(--paper-dim); letter-spacing: .1em; }
+  .verdict .read { font-family: var(--display); font-weight: 600; font-size: 1.05rem; margin-left: auto; text-align: right; }
+  .params { display: grid; gap: 1.1rem; }
+  .param { display: grid; gap: .45rem; }
+  .param .head { display: flex; align-items: baseline; gap: .8rem; font: 400 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--paper-dim); }
+  .param .weight { margin-left: auto; color: var(--amber); }
+  .param .val { font-weight: 500; color: var(--paper); min-width: 2ch; text-align: right; }
+  .param .track { height: 5px; background: var(--panel-hi); border-radius: 3px; overflow: hidden; }
+  .param .fill { height: 100%; border-radius: 3px; width: 0; transition: width .7s cubic-bezier(.2,.8,.2,1); }
+  .param .note { font-size: .85rem; color: var(--paper-dim); margin: 0; }
+  h2 { font: 500 .72rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--paper-dim); margin: 0 0 .8rem; }
+  .cols { display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .wrong { margin: 0; padding: 0; list-style: none; display: grid; gap: .5rem; }
+  .wrong li { font-size: .9rem; border-left: 2px solid var(--live); background: rgba(255,93,71,.06); border-radius: 0 8px 8px 0; padding: .6rem .85rem; }
+  .notes { margin: 0; padding-left: 1.15rem; }
+  .notes li { margin: .3rem 0; }
+  .none { color: var(--paper-dim); margin: 0; font-size: .9rem; }
+  .say { background: var(--panel); border-left: 2px solid var(--amber); border-radius: 0 10px 10px 0; padding: .9rem 1.1rem; margin: 0; }
+  .transcript { font-family: var(--mono); font-size: .82rem; line-height: 1.75; color: var(--paper-dim); white-space: pre-wrap; margin: .9rem 0 0; }
+
+  /* per-question breakdown */
+  .items { display: grid; gap: .6rem; }
+  .item { background: var(--panel); border: 1px solid var(--seam); border-radius: 12px; overflow: hidden; }
+  .item > summary {
+    cursor: pointer; padding: .9rem 1.1rem; display: flex; align-items: center; gap: .9rem;
+    font-size: .92rem; list-style: none;
+  }
+  .item > summary::-webkit-details-marker { display: none; }
+  .item > summary:hover { background: var(--panel-hi); }
+  .item .idx { font: 500 .72rem/1 var(--mono); color: var(--paper-dim); min-width: 2ch; }
+  .item .qt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .sc { font: 600 1rem/1 var(--mono); font-variant-numeric: tabular-nums; }
+  .item .body { padding: 0 1.1rem 1.25rem; display: grid; gap: 1.25rem; border-top: 1px solid var(--seam); padding-top: 1.25rem; }
+  .item .body h2 { margin-bottom: .5rem; }
+  .item .full { font-size: .95rem; margin: 0; }
+  details > summary { cursor: pointer; }
+  .tx { border-top: 1px solid var(--seam); padding-top: 1.1rem; }
+  .tx h2 { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  .tx .wc { font: 400 .7rem/1 var(--mono); letter-spacing: .06em; text-transform: none; color: var(--paper-dim); }
+
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  /* ── Print / Save as PDF: light sheet, report only ───────────────── */
+  @media print {
+    @page { margin: 14mm; }
+    body {
+      background: #fff !important; background-image: none !important; color: #14162b;
+      font-size: 11pt; -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .wrap { max-width: none; padding: 0; }
+    .strip, .crumb, .no-print, dialog { display: none !important; }
+    .view:not(#view-report) { display: none !important; }
+    .sheet-head {
+      display: block; border-bottom: 2px solid #14162b; padding-bottom: .6rem; margin-bottom: 1.25rem;
+    }
+    .sheet-head .t { font-family: var(--display); font-weight: 800; font-size: 15pt; }
+    .sheet-head .m { font-family: var(--mono); font-size: 8.5pt; color: #555b7a; margin-top: .25rem; }
+    h1.big { font-size: 17pt; color: #14162b; }
+    h2 { color: #555b7a; }
+    .verdict { border-bottom-color: #c9cbdd; }
+    .verdict .num { font-size: 40pt; }
+    .verdict .of, .count, .param .note, .none, .transcript, .lede, .item .idx { color: #555b7a; }
+    .param .track { background: #e6e7f0; }
+    .say, .item, .tally { background: #f4f4fa; border-color: #c9cbdd; }
+    .wrong li { background: #fdf0ee; }
+    .item .body, .tx { border-top-color: #c9cbdd; }
+    .tx .wc { color: #555b7a; }
+    /* expand every collapsed section so nothing is lost in the PDF */
+    details { break-inside: avoid; }
+    details > summary { list-style: none; }
+    .item, .params, .cols > div { break-inside: avoid; }
+  }
+</style>
+</head>
+<body data-phase="standby">
+<div class="wrap">
+  <header class="strip">
+    <span class="mark">The <em>Booth</em></span>
+    <span class="mono-label" id="strip-sub">Interview practice</span>
+    <span class="who" id="who" hidden>
+      <span class="lamp" id="lamp">Standby</span>
+      <span class="name" id="who-name"></span>
+      <span class="badge" id="who-badge"></span>
+    </span>
+  </header>
+
+  <!-- 1. Login ─────────────────────────────────────────────────────── -->
+  <section class="view gate" id="view-login">
+    <h1 class="big">Practise out loud.</h1>
+    <p class="lede">Answer real interview questions by speaking. Get them transcribed and graded on completeness, correctness and relevance.</p>
+    <form id="login-form">
+      <div class="field">
+        <label for="candidate">Candidate name</label>
+        <input id="candidate" name="candidate" type="text" autocomplete="name" required placeholder="Adarsh Battu">
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="anything">
+      </div>
+      <button class="key go wide" type="submit">Sign in</button>
+      <p class="hint">Local practice only — the password isn't checked and nothing is stored.</p>
+    </form>
+  </section>
+
+  <!-- 2. Dashboard ─────────────────────────────────────────────────── -->
+  <section class="view" id="view-dashboard" hidden>
+    <h1 class="big">Pick your format.</h1>
+    <p class="lede">One is ready now. The other two need a paid tier for live streaming and video.</p>
+    <div class="modes">
+      <button class="mode" id="mode-vocal">
+        <span class="tier">Free</span>
+        <h3>Vocal</h3>
+        <p>The question is written. You answer out loud, then submit the whole set for grading.</p>
+        <span class="flow">read → record → submit</span>
+      </button>
+      <button class="mode" disabled>
+        <span class="tier">Paid</span>
+        <h3>Telephonic</h3>
+        <p>The question is spoken to you and your answer is transcribed live, as it happens.</p>
+        <span class="flow">listen → speak → live text</span>
+      </button>
+      <button class="mode" disabled>
+        <span class="tier">Paid</span>
+        <h3>Video</h3>
+        <p>A natural back-and-forth video conversation with follow-up questions.</p>
+        <span class="flow">converse → follow-ups</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 3. Topic + expertise ─────────────────────────────────────────── -->
+  <section class="view" id="view-setup" hidden>
+    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Vocal</span></div>
+    <h1 class="big">What are we practising?</h1>
+    <p class="lede">Pick a topic, then set the bar you want to be held to.</p>
+
+    <h2>Topic</h2>
+    <div class="topics" id="topics"></div>
+
+    <h2>Expertise</h2>
+    <div class="dial">
+      <div class="rail">
+        <input type="range" id="dial" min="0" max="2" step="1" value="1"
+               aria-label="Expertise level" aria-describedby="dial-blurb">
+        <span class="notches" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>
+      <div class="anchors" id="anchors"></div>
+      <p class="blurb" id="dial-blurb"></p>
+    </div>
+
+    <button class="key go" id="to-interview">Continue</button>
+  </section>
+
+  <!-- 4. Interview ─────────────────────────────────────────────────── -->
+  <section class="view" id="view-interview" hidden>
+    <div class="crumb">
+      <button data-go="setup">← Setup</button>
+      <span class="mono-label" id="setup-summary"></span>
+    </div>
+
+    <div id="pre">
+      <h1 class="big">Ready when you are.</h1>
+      <p class="lede" id="pre-lede">You'll work through the questions one at a time. Record each answer, then submit the whole set at the end for evaluation.</p>
+      <button class="key go wide" id="start" style="max-width:22rem">Start interview</button>
+    </div>
+
+    <div id="during" hidden>
+      <div class="nav" id="nav"></div>
+
+      <div class="qcard">
+        <div class="qmeta">
+          <span class="chip" id="tag">—</span>
+          <span class="count" id="count"></span>
+          <span class="count" id="level-tag"></span>
+        </div>
+        <p id="question">Loading…</p>
+      </div>
+
+      <div class="console">
+        <div class="deck">
+          <button class="key arm" id="record"><span class="dot"></span>Record</button>
+          <button class="key" id="stop" disabled>Stop</button>
+          <button class="ghost" id="prev">← Previous</button>
+          <button class="ghost" id="next">Next →</button>
+          <span class="clock" id="clock">0:00</span>
+        </div>
+        <div class="vu" id="vu" aria-hidden="true"></div>
+        <div class="scale"><span>Input level</span><span id="peak">—</span></div>
+        <audio id="playback" controls hidden></audio>
+        <p class="status" id="status">Record your answer out loud.</p>
+      </div>
+
+      <div class="finish">
+        <button class="key go" id="finish">End interview &amp; submit</button>
+        <p id="finish-note"></p>
+      </div>
+    </div>
+
+    <div id="grading" class="grading" hidden aria-live="polite">
+      <h1 class="big">Grading your interview.</h1>
+      <p class="lede">Each answer is transcribed, then graded against the ideal answer at your level. Keep this tab open.</p>
+      <div class="bar"><span id="bar-fill"></span></div>
+      <p class="count" id="grading-status">Starting…</p>
+    </div>
+  </section>
+
+  <!-- 5. Report ────────────────────────────────────────────────────── -->
+  <section class="view" id="view-report" hidden>
+    <div class="crumb no-print">
+      <button id="again">↻ Practise again</button>
+    </div>
+    <div class="sheet-head">
+      <div class="t">The Booth — interview report</div>
+      <div class="m" id="sheet-meta"></div>
+    </div>
+    <div class="report" id="report" aria-live="polite"></div>
+    <div class="finish no-print">
+      <button class="key go" id="pdf">Download PDF</button>
+      <p>Opens your browser's print dialog — choose <strong>Save as PDF</strong> as the destination.</p>
+    </div>
+  </section>
+</div>
+
+<!-- Submit confirmation ────────────────────────────────────────────── -->
+<dialog id="confirm">
+  <h3>Submit for evaluation?</h3>
+  <p>This ends the interview. Your answers are transcribed and graded, and you can't re-record after this.</p>
+  <div class="tally" id="tally"></div>
+  <menu>
+    <button class="ghost" id="confirm-cancel" autofocus>Keep practising</button>
+    <button class="key go" id="confirm-go">Submit for evaluation</button>
+  </menu>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const SEGMENTS = 24;
+const VIEWS = ['login', 'dashboard', 'setup', 'interview', 'report'];
+const PARAMS = ['completeness', 'correctness', 'relevance'];
+const LEVEL_BLURB = {
+  beginner: 'Graded on the core idea in plain language and accurate fundamentals. Missing edge cases and complexity analysis cost you nothing.',
+  advanced: 'Graded on the mechanism explained correctly, plus tradeoffs, complexity and at least one alternative. Hand-waving over the hard part costs marks.',
+  expert: 'Graded strictly on precision, failure modes and production judgement. Vagueness and textbook recitation are penalised.',
+};
+
+const state = {
+  candidate: '', level: 'advanced', levels: [], topic: '',
+  questions: [], takes: [], index: 0,
+  rec: null, stream: null, ctx: null, ticker: null,
+};
+
+$('vu').innerHTML = '<i></i>'.repeat(SEGMENTS);
+const segments = [...$('vu').children];
+const escape = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const title = s => s[0].toUpperCase() + s.slice(1);
+const words = s => (String(s ?? '').trim().match(/\S+/g) || []).length;
+
+function show(name) {
+  VIEWS.forEach(v => $(`view-${v}`).hidden = v !== name);
+  $('who').hidden = name === 'login';
+  $('strip-sub').textContent = name === 'login' ? 'Interview practice' : 'Vocal · free tier';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function setStatus(msg, tone) {
+  $('status').textContent = msg;
+  tone ? $('status').dataset.tone = tone : delete $('status').dataset.tone;
+}
+
+// standby (dim) → live (green, interview running) → recording (red)
+function setPhase(phase) {
+  document.body.dataset.phase = phase;
+  $('lamp').textContent = { standby: 'Standby', live: 'Live', recording: 'Recording' }[phase];
+}
+
+function restLadder() {
+  segments.forEach(s => { s.style.height = '28%'; s.style.background = 'var(--seam)'; });
+  $('peak').textContent = '—';
+}
+
+async function get(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+const answered = () => state.takes.filter(Boolean).length;
+
+// ── 1. Login ──────────────────────────────────────────────────────────
+$('login-form').onsubmit = e => {
+  e.preventDefault();
+  const name = $('candidate').value.trim();
+  if (!name) return;
+  state.candidate = name;
+  $('who-name').textContent = name;
+  $('who-badge').textContent = name[0].toUpperCase();
+  show('dashboard');
+};
+
+// ── 2. Dashboard → setup ──────────────────────────────────────────────
+let bank = null;   // every question, fetched once
+
+$('mode-vocal').onclick = async () => {
+  show('setup');
+  if (bank) return;
+  try {
+    bank = await get('/questions');
+    state.levels = await get('/levels');
+  } catch (e) {
+    $('topics').innerHTML = `<p class="none">Cannot reach the server: ${escape(e.message)}</p>`;
+    return;
+  }
+  buildTopics();
+  buildDial();
+};
+
+function buildTopics() {
+  const counts = new Map();
+  bank.forEach(q => counts.set(q.topic, (counts.get(q.topic) ?? 0) + 1));
+  const card = (value, label, n, extra = '') => `
+    <button class="topic ${extra}" data-topic="${escape(value)}" aria-pressed="${value === state.topic}">
+      <strong>${escape(label)}</strong>
+      <span class="n">${n} question${n === 1 ? '' : 's'}</span>
+    </button>`;
+  $('topics').innerHTML = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([t, n]) => card(t, t, n)).join('') + card('', 'Every topic', bank.length, 'every');
+  $('topics').querySelectorAll('.topic').forEach(b => b.onclick = () => {
+    state.topic = b.dataset.topic;
+    $('topics').querySelectorAll('.topic').forEach(o => o.setAttribute('aria-pressed', o === b));
+  });
+}
+
+function buildDial() {
+  $('anchors').innerHTML = state.levels
+    .map((l, i) => `<button data-i="${i}" aria-current="false">${escape(title(l))}</button>`).join('');
+  $('anchors').querySelectorAll('button').forEach(b => b.onclick = () => {
+    $('dial').value = b.dataset.i;
+    syncDial();
+  });
+  $('dial').max = state.levels.length - 1;
+  $('dial').value = Math.max(0, state.levels.indexOf(state.level));
+  $('dial').oninput = syncDial;
+  syncDial();
+}
+
+function syncDial() {
+  const i = Number($('dial').value);
+  state.level = state.levels[i];
+  $('dial').setAttribute('aria-valuetext', title(state.level));
+  $('dial-blurb').textContent = LEVEL_BLURB[state.level] ?? '';
+  $('anchors').querySelectorAll('button').forEach(b => b.setAttribute('aria-current', Number(b.dataset.i) === i));
+}
+
+document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => show(b.dataset.go));
+
+// ── 3. Setup → interview ──────────────────────────────────────────────
+$('to-interview').onclick = () => {
+  state.questions = state.topic ? bank.filter(q => q.topic === state.topic) : bank.slice();
+  if (!state.questions.length) return;
+  state.takes = state.questions.map(() => null);
+  state.index = 0;
+  const n = state.questions.length;
+  $('setup-summary').textContent = `${state.topic || 'Every topic'} · ${state.level}`;
+  $('pre-lede').textContent = `${n} question${n === 1 ? '' : 's'}, one at a time. Record each answer, then submit the whole set at the end for evaluation.`;
+  $('pre').hidden = false;
+  $('during').hidden = true;
+  $('grading').hidden = true;
+  show('interview');
+};
+
+// ── 4. Interview ──────────────────────────────────────────────────────
+$('start').onclick = () => {
+  $('pre').hidden = true;
+  $('during').hidden = false;
+  setPhase('live');          // the standby lamp goes green: the interview is running
+  showQuestion();
+};
+
+function showQuestion() {
+  const q = state.questions[state.index];
+  $('tag').textContent = q.topic;
+  $('count').textContent = `Question ${state.index + 1} of ${state.questions.length}`;
+  $('level-tag').textContent = state.level;
+  $('question').textContent = q.text;
+  $('prev').disabled = state.index === 0;
+  $('next').disabled = state.index === state.questions.length - 1;
+  loadTake();
+  buildNav();
+  updateFinish();
+}
+
+function buildNav() {
+  $('nav').innerHTML = state.questions.map((q, i) => `
+    <button data-i="${i}" data-done="${!!state.takes[i]}" aria-current="${i === state.index}"
+            title="Question ${i + 1}${state.takes[i] ? ' — recorded' : ''}">${i + 1}</button>`).join('')
+    + `<span class="legend">${answered()} of ${state.questions.length} recorded</span>`;
+  $('nav').querySelectorAll('button').forEach(b => b.onclick = () => {
+    state.index = Number(b.dataset.i);
+    showQuestion();
+  });
+}
+
+function updateFinish() {
+  const done = answered(), total = state.questions.length;
+  $('finish').disabled = done === 0;
+  $('finish-note').textContent = done === 0
+    ? 'Record at least one answer before submitting.'
+    : done < total
+      ? `${total - done} question${total - done === 1 ? " still unrecorded — it'll" : "s still unrecorded — they'll"} score zero.`
+      : 'Everything recorded.';
+}
+
+// Show whichever take belongs to the current question, if any.
+function loadTake() {
+  const take = state.takes[state.index];
+  $('clock').textContent = '0:00';
+  restLadder();
+  if (take) {
+    $('playback').src = take.url;
+    $('playback').hidden = false;
+    $('record').innerHTML = '<span class="dot"></span>Re-record';
+    setStatus(`Recorded — ${take.seconds}s. Play it back, record it again, or move on.`, 'good');
+  } else {
+    $('playback').removeAttribute('src');
+    $('playback').hidden = true;
+    $('record').innerHTML = '<span class="dot"></span>Record';
+    setStatus('Record your answer out loud, the way you would say it in the room.');
+  }
+}
+
+// 16-bit PCM mono WAV, so the server needs no audio decoder of its own.
+function toWav(samples, rate) {
+  const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const str = (at, s) => [...s].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); str(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  str(36, 'data'); view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, s * 0x7fff, true);
+  }
+  return new Blob([view.buffer], { type: 'audio/wav' });
+}
+
+$('record').onclick = async () => {
+  try {
+    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    return setStatus(`No microphone input: ${e.message}. Check the browser's mic permission, then record again.`, 'bad');
+  }
+  const slot = state.index;                       // the question this take belongs to
+  const previous = state.takes[slot];
+  if (previous) URL.revokeObjectURL(previous.url);
+  state.takes[slot] = null;
+  $('playback').removeAttribute('src');
+  $('playback').hidden = true;
+  buildNav();
+  updateFinish();
+
+  const chunks = [];
+  state.rec = new MediaRecorder(state.stream);
+  state.rec.ondataavailable = e => chunks.push(e.data);
+  state.rec.onstop = async () => {
+    setStatus('Preparing your take…');
+    try {
+      const raw = await new Blob(chunks, { type: state.rec.mimeType }).arrayBuffer();
+      const decoded = await new AudioContext().decodeAudioData(raw);
+      // Resample to 16 kHz mono, what the speech model expects.
+      const off = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16000), 16000);
+      const src = off.createBufferSource();
+      src.buffer = decoded;
+      src.connect(off.destination);
+      src.start();
+      const wav = toWav((await off.startRendering()).getChannelData(0), 16000);
+      state.takes[slot] = { wav, url: URL.createObjectURL(wav), seconds: decoded.duration.toFixed(0) };
+      buildNav();
+      updateFinish();
+      if (state.index === slot) loadTake();
+    } catch (e) {
+      setStatus(`Could not read that recording: ${e.message}. Record it again.`, 'bad');
+    }
+  };
+  state.rec.start();
+
+  state.ctx = new AudioContext();
+  const analyser = state.ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  state.ctx.createMediaStreamSource(state.stream).connect(analyser);
+  const buf = new Uint8Array(analyser.fftSize);
+  const t0 = performance.now();
+
+  state.ticker = setInterval(() => {
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (const v of buf) sum += (v - 128) ** 2;
+    const rms = Math.sqrt(sum / buf.length) / 128;
+    const lit = Math.min(SEGMENTS, Math.round(rms * 4.5 * SEGMENTS));
+    segments.forEach((s, i) => {
+      s.style.height = i < lit ? `${40 + (i / SEGMENTS) * 60}%` : '28%';
+      s.style.background = i >= lit ? 'var(--seam)' : i > SEGMENTS * 0.85 ? 'var(--live)' : 'var(--amber)';
+    });
+    $('peak').textContent = lit ? `${Math.max(-60, Math.round(20 * Math.log10(rms)))} dB` : 'silent';
+    const secs = Math.floor((performance.now() - t0) / 1000);
+    $('clock').textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  }, 90);
+
+  $('record').disabled = true;
+  $('stop').disabled = false;
+  $('prev').disabled = $('next').disabled = $('finish').disabled = true;
+  setPhase('recording');
+  setStatus('Listening. Talk through the whole answer, then press Stop.');
+};
+
+$('stop').onclick = () => {
+  state.rec.stop();
+  state.stream.getTracks().forEach(t => t.stop());
+  clearInterval(state.ticker);
+  state.ctx.close();
+  restLadder();
+  $('record').disabled = false;
+  $('stop').disabled = true;
+  $('prev').disabled = state.index === 0;
+  $('next').disabled = state.index === state.questions.length - 1;
+  setPhase('live');           // still in the interview, just not recording
+  updateFinish();
+};
+
+$('prev').onclick = () => { state.index--; showQuestion(); };
+$('next').onclick = () => { state.index++; showQuestion(); };
+
+// ── Confirm, then grade the whole interview ───────────────────────────
+$('finish').onclick = () => {
+  const total = state.questions.length, done = answered();
+  $('tally').innerHTML = `
+    <div><span>Questions</span><span>${total}</span></div>
+    <div><span>Recorded</span><span>${done}</span></div>
+    ${done < total ? `<div class="warn"><span>Unanswered (score 0)</span><span>${total - done}</span></div>` : ''}
+    <div><span>Graded at</span><span>${escape(title(state.level))}</span></div>`;
+  $('confirm').showModal();
+};
+
+$('confirm-cancel').onclick = () => $('confirm').close();
+
+$('confirm-go').onclick = async () => {
+  $('confirm').close();
+  $('during').hidden = true;
+  $('grading').hidden = false;
+  setPhase('standby');        // the interview is over
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  const total = state.questions.length;
+  const results = [];
+  let graded = 0;
+
+  for (let i = 0; i < total; i++) {
+    const q = state.questions[i];
+    $('grading-status').textContent = `Question ${i + 1} of ${total} — ${q.topic}`;
+    const take = state.takes[i];
+    if (!take) {
+      results.push({ question: q, unanswered: true });
+    } else {
+      const body = new FormData();
+      body.append('question_id', q.id);
+      body.append('level', state.level);
+      body.append('audio', take.wav, 'answer.wav');
+      try {
+        const res = await fetch('/submit', { method: 'POST', body });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `${res.status} ${res.statusText}`);
+        results.push({ question: q, report: await res.json() });
+        graded++;
+      } catch (e) {
+        // One bad answer must not lose the rest of the interview.
+        results.push({ question: q, failed: e.message });
+      }
+    }
+    $('bar-fill').style.width = `${((i + 1) / total) * 100}%`;
+  }
+
+  $('grading').hidden = true;
+  if (!graded) {
+    $('during').hidden = false;
+    setPhase('live');
+    setStatus(`Grading failed for every answer: ${results.find(r => r.failed)?.failed ?? 'unknown error'}. Your recordings are still here — try submitting again.`, 'bad');
+    updateFinish();
+    return;
+  }
+  renderReport(results);
+  show('report');
+};
+
+// ── 5. Report ─────────────────────────────────────────────────────────
+const tone = v => v >= 70 ? 'var(--pass)' : v >= 40 ? 'var(--amber)' : 'var(--live)';
+
+function renderReport(results) {
+  // Unanswered counts as zero; a server failure is excluded so a 502 can't
+  // masquerade as a bad answer.
+  const scored = results.filter(r => !r.failed);
+  const overall = Math.round(scored.reduce((s, r) => s + (r.report?.score ?? 0), 0) / scored.length);
+  const graded = results.filter(r => r.report);
+  const failed = results.filter(r => r.failed);
+  const weights = graded[0].report.weights;
+
+  const avg = name => Math.round(
+    scored.reduce((s, r) => s + (r.report?.parameters[name].score ?? 0), 0) / scored.length);
+
+  const read = overall >= 80 ? 'Interview ready' : overall >= 60 ? 'Nearly there'
+    : overall >= 35 ? 'Needs another pass' : 'Start this topic over';
+
+  const notes = items => items.length
+    ? `<ul class="notes">${items.map(i => `<li>${escape(i)}</li>`).join('')}</ul>`
+    : '<p class="none">Nothing flagged.</p>';
+
+  const bar = (name, score, weight) => `
+    <div class="param">
+      <div class="head"><span>${name}</span>
+        ${weight === undefined ? '' : `<span class="weight">×${weight.toFixed(2)}</span>`}
+        <span class="val">${score}</span></div>
+      <span class="track"><span class="fill" style="width:${score}%;background:${tone(score)}"></span></span>
+    </div>`;
+
+  const param = (r, name) => {
+    const p = r.parameters[name];
+    return `<div class="param">
+      <div class="head"><span>${name}</span>
+        <span class="weight">×${r.weights[name].toFixed(2)}</span>
+        <span class="val">${p.score}</span></div>
+      <span class="track"><span class="fill" style="width:${p.score}%;background:${tone(p.score)}"></span></span>
+      <p class="note">${escape(p.note)}</p></div>`;
+  };
+
+  const item = (r, i) => {
+    const head = (score, colour) => `
+      <summary><span class="idx">${String(i + 1).padStart(2, '0')}</span>
+        <span class="qt">${escape(r.question.text)}</span>
+        <span class="sc" style="color:${colour}">${score}</span></summary>`;
+
+    if (r.unanswered) return `<details class="item">${head('0', 'var(--paper-dim)')}
+      <div class="body"><p class="full">You didn't record an answer to this one, so it scores zero.</p></div></details>`;
+    if (r.failed) return `<details class="item">${head('—', 'var(--live)')}
+      <div class="body"><p class="full">This answer couldn't be graded: ${escape(r.failed)}. It's left out of the overall score.</p></div></details>`;
+
+    const d = r.report;
+    return `<details class="item">${head(d.score, tone(d.score))}
+      <div class="body">
+        <div class="params">${PARAMS.map(n => param(d, n)).join('')}</div>
+        ${d.errors.length ? `<div><h2>Incorrect claims</h2>
+          <ul class="wrong">${d.errors.map(e => `<li>${escape(e)}</li>`).join('')}</ul></div>` : ''}
+        <div class="cols">
+          <div><h2>What worked</h2>${notes(d.comments.strengths)}</div>
+          <div><h2>What was missing</h2>${notes(d.comments.gaps)}</div>
+        </div>
+        ${d.comments.suggestion ? `<div><h2>Do this next</h2><p class="say">${escape(d.comments.suggestion)}</p></div>` : ''}
+        <div class="tx">
+          <h2>What you said <span class="wc">${words(d.transcript)} words</span></h2>
+          <p class="transcript">${words(d.transcript) ? escape(d.transcript) : 'Nothing was transcribed.'}</p>
+        </div>
+      </div></details>`;
+  };
+
+  const allGaps = [...new Set(graded.flatMap(r => r.report.comments.gaps))].slice(0, 6);
+  const allWins = [...new Set(graded.flatMap(r => r.report.comments.strengths))].slice(0, 6);
+  const allErrors = graded.flatMap(r => r.report.errors);
+  const stamp = new Date().toLocaleString();
+
+  $('sheet-meta').textContent =
+    `${state.candidate} · ${state.topic || 'Every topic'} · ${title(state.level)} · ${stamp}`;
+
+  $('report').innerHTML = `
+    <h1 class="big">${escape(state.candidate)}, here's how that went.</h1>
+    <p class="lede">${escape(state.topic || 'Every topic')} · graded at ${escape(state.level)} level ·
+      ${graded.length} of ${results.length} answer${results.length === 1 ? '' : 's'} graded · ${escape(stamp)}</p>
+
+    <div class="verdict">
+      <span class="num" style="color:${tone(overall)}">${overall}</span><span class="of">/ 100</span>
+      <span class="read" style="color:${tone(overall)}">${read}<br>
+        <span class="count">average across ${scored.length} question${scored.length === 1 ? '' : 's'}</span></span>
+    </div>
+
+    <div><h2>Across the whole interview</h2>
+      <div class="params">${PARAMS.map(n => bar(n, avg(n), weights[n])).join('')}</div></div>
+
+    <div class="cols">
+      <div><h2>What worked</h2>${notes(allWins)}</div>
+      <div><h2>What to work on</h2>${notes(allGaps)}</div>
+    </div>
+
+    ${allErrors.length ? `<div><h2>Incorrect claims across all answers</h2>
+      <ul class="wrong">${allErrors.map(e => `<li>${escape(e)}</li>`).join('')}</ul></div>` : ''}
+
+    ${failed.length ? `<p class="none">${failed.length} answer${failed.length === 1 ? '' : 's'}
+      couldn't be graded and ${failed.length === 1 ? 'is' : 'are'} excluded from the average.</p>` : ''}
+
+    <div><h2>Question by question</h2>
+      <div class="items">${results.map(item).join('')}</div></div>`;
+}
+
+// Native print → "Save as PDF". Open every collapsed section first, so the
+// PDF holds the whole report rather than just the summaries.
+$('pdf').onclick = () => {
+  $('report').querySelectorAll('details').forEach(d => d.open = true);
+  window.print();
+};
+
+$('again').onclick = () => {
+  state.takes.forEach(t => t && URL.revokeObjectURL(t.url));
+  state.takes = [];
+  state.questions = [];
+  setPhase('standby');
+  show('setup');
+};
+
+setPhase('standby');
+show('login');
+</script>
+</body>
+</html>

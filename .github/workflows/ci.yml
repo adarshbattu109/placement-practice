@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: uv tool run ruff check .
+      - run: uv tool run ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: uv sync
+      # The self-check stubs the remote judge, so it needs no HF_TOKEN.
+      - run: uv run python -m app.evaluate
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      # Audit the locked dependency set. pip-audit runs in its own isolated tool
+      # environment, so it has to be pointed at an exported requirements file.
+      - run: uv export --frozen --no-emit-project --format requirements.txt -o requirements.txt
+      - run: uv tool run pip-audit -r requirements.txt
