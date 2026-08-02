@@ -1,11 +1,17 @@
-# placement-practice
+# Placemint.Academy
 
 Spoken mock-interview practice. Pick a topic and an expertise level, record your answer out
 loud, and get it transcribed and graded on **Completeness**, **Correctness** and **Relevance**
 against the question's ideal answer.
 
-Everything runs on the HuggingFace Inference API. **No model weights are downloaded** — the
-whole thing installs in seconds and runs on a laptop.
+The repository, the package and the console script are all still `placement-practice` —
+`Placemint.Academy` is the product name, and renaming the distribution would break
+`uv run practice` and every existing install for no benefit.
+
+Every model call is remote, on the HuggingFace Inference API by default. **No model weights
+are downloaded** — the whole thing installs in seconds and runs on a laptop. Any of the three
+roles can be pointed at another provider with two environment variables; see
+[Choosing your models](#choosing-your-models).
 
 ## Quickstart
 
@@ -39,10 +45,52 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxx
 The free community tier is enough. A 20-question session costs roughly $0.15 of included
 credit — see [Cost](#cost).
 
+## Choosing your models
+
+Three roles call out to a model, and each is configured independently. The defaults live in
+`ENDPOINTS` in `src/constants/constants.py`; every field is overridable from `.env.local`, so
+switching a provider needs no code change.
+
+| Role | Default | Does |
+|------|---------|------|
+| `ASR` | `openai/whisper-large-v3` | Transcribes the recorded answer |
+| `JUDGE` | `meta-llama/Llama-3.3-70B-Instruct` | Scores the transcript |
+| `TTS` | `hexgrad/Kokoro-82M` | Speaks the question aloud (not wired up yet) |
+
+Four variables per role, all optional:
+
+| Variable | Effect |
+|----------|--------|
+| `<ROLE>_URL` | Base url of an OpenAI-compatible server. Unset means HuggingFace |
+| `<ROLE>_MODEL` | The model name that server knows it by |
+| `<ROLE>_KEY` | Its api key. Falls back to `HF_TOKEN`; local servers ignore it |
+| `<ROLE>_TIMEOUT` | Seconds. Must stay under `JOB_STALE_MINUTES`, asserted at import |
+
+Setting a `_URL` switches that role to the OpenAI wire format, which is what Groq, OpenAI,
+vLLM, LM Studio and Ollama all speak. So ASR on Groq, priced at a published $0.04/audio-hour:
+
+```
+ASR_URL=https://api.groq.com/openai/v1
+ASR_MODEL=whisper-large-v3-turbo
+ASR_KEY=gsk_...
+```
+
+Or the judge on a local Ollama — no key, no per-token cost, and the ASR bill untouched:
+
+```
+JUDGE_URL=http://localhost:11434/v1
+JUDGE_MODEL=qwen2.5:14b
+```
+
+A smaller judge is a real change to the product, not a free swap: `LEVELS` is calibrated
+against 70B output, and published work finds small judges shift score distributions and flip
+on ~14% of repeat runs. Use one for development, and re-check the calibration before trusting
+its scores.
+
 ## How it works
 
 ```
-browser                        server                      HuggingFace Inference API
+browser                        server                      wherever ENDPOINTS points
 ───────                        ──────                      ─────────────────────────
 MediaRecorder
   ↓ resample 16 kHz mono
@@ -56,9 +104,9 @@ MediaRecorder
 
                                grading worker (background thread)
                                    ↓ every 3s: claim one job
-                               ASR ─────────────────────→ openai/whisper-large-v3
+                               transcribe('asr') ───────→ whisper-large-v3
                                    ↓ transcript
-                               judge ───────────────────→ meta-llama/Llama-3.3-70B-Instruct
+                               chat('judge') ───────────→ Llama-3.3-70B-Instruct
                                    ↓ 3 scores + notes
                                weight by level, store, re-average the sitting
   GET /history (poll) ────────────→ ↓
@@ -150,8 +198,9 @@ app/
   worker.py        the background thread that drains the grading queue
   index.html       the entire frontend, one file, no build step
 src/
-  constants/       models, levels and weights, thresholds, every filepath
-  helpers/         security.py — scrypt passwords, hmac session cookies
+  constants/       ENDPOINTS, levels and weights, thresholds, every filepath
+  helpers/         inference.py — every remote model call, and who serves it
+                   security.py  — scrypt passwords, hmac session cookies
   db/              schema.sql and store.py, the only file containing SQL
 data/
   questions.json   21 questions across 6 topics — the seed for a fresh database
@@ -211,8 +260,9 @@ A report looks like:
 ## Development
 
 ```bash
-uv run python -m app.evaluate    # self-check: parsing + weighting, judge stubbed
-uv run python -m app.worker      # self-check: the queue drains, failures park
+uv run python -m src.helpers.inference  # self-check: endpoint routing, both call shapes
+uv run python -m app.evaluate           # self-check: parsing + weighting, judge stubbed
+uv run python -m app.worker             # self-check: the queue drains, failures park
 uv tool run ruff check .
 uv tool run ruff format .
 ```
@@ -258,8 +308,11 @@ No test touches the network, so none of them need `HF_TOKEN`.
 - **No password reset,** and no way to revoke one session — rotating `SECRET_KEY` signs
   everyone out at once. Don't expose this server to an untrusted network; see
   [SECURITY.md](SECURITY.md).
-- **Audio leaves your machine.** Recordings go to the HuggingFace Inference API for
-  transcription. Don't speak anything confidential.
+- **Audio leaves your machine.** Recordings go to whichever provider `ASR_URL` names, the
+  HuggingFace Inference API by default. Don't speak anything confidential.
+- **Switching a provider is not switching a result.** The endpoint table makes the swap free;
+  the calibration behind it is not. `LEVELS` is tuned against 70B judge output, so a different
+  judge needs its weights re-checked before its scores mean anything.
 
 ## License
 

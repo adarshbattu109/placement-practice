@@ -1,22 +1,20 @@
 """Grade a transcribed answer on Completeness, Correctness and Relevance.
 
-An LLM judge on the HF Inference API scores the three against the ideal answer.
+An LLM judge scores the three against the ideal answer. Which judge, and where it is served
+from, is `src/helpers/inference.py`'s business — this file owns the prompt and the parser.
 """
 
-import functools
 import json
-import os
 import re
 
 from src.constants.constants import (
     JUDGE_MAX_TOKENS,
-    JUDGE_MODEL_DEFAULT,
     JUDGE_TEMPERATURE,
-    JUDGE_TIMEOUT,
     LEVELS,
     MIN_WORDS,
     PARAMETERS,
 )
+from src.helpers.inference import chat
 
 SYSTEM = """You are a strict but fair technical interviewer grading a spoken answer.
 
@@ -47,36 +45,6 @@ Each note is one sentence. "errors" lists specific incorrect claims, empty if no
 candidate as "you". "suggestion" is one concrete sentence on what to do next."""
 
 
-@functools.cache
-def _client():
-    """The HF Inference API client, used for speech and for the default judge."""
-    from huggingface_hub import InferenceClient
-
-    if not os.getenv("HF_TOKEN"):
-        raise RuntimeError("HF_TOKEN is not set. Add it to .env.local, then restart the server.")
-    return InferenceClient(token=os.environ["HF_TOKEN"], timeout=JUDGE_TIMEOUT)
-
-
-@functools.cache
-def _judge_client():
-    """Whichever backend grades. HF unless JUDGE_URL points somewhere else.
-
-    Ollama and OpenAI both serve the same chat-completions shape, so pointing
-    JUDGE_URL at one of them swaps the judge without touching the prompt or parser.
-    """
-    if not os.getenv("JUDGE_URL"):
-        return _client()
-
-    from huggingface_hub import InferenceClient
-
-    # Local servers ignore the key but the client insists on one.
-    return InferenceClient(
-        base_url=os.environ["JUDGE_URL"],
-        api_key=os.getenv("JUDGE_KEY") or "unused",
-        timeout=JUDGE_TIMEOUT,
-    )
-
-
 def _judge(transcript, question, ideal_answer, level):
     """Ask the judge model for the three scores. Returns the parsed dict."""
     prompt = (
@@ -85,14 +53,15 @@ def _judge(transcript, question, ideal_answer, level):
         f"EXPERTISE LEVEL: {level}\n{LEVELS[level]['brief']}\n\n"
         f"CANDIDATE TRANSCRIPT:\n{transcript}"
     )
-    reply = _judge_client().chat_completion(
-        model=os.getenv("JUDGE_MODEL", JUDGE_MODEL_DEFAULT),
-        messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-        max_tokens=JUDGE_MAX_TOKENS,
-        temperature=JUDGE_TEMPERATURE,
-        response_format={"type": "json_object"},
+    return _parse(
+        chat(
+            "judge",
+            [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
+            max_tokens=JUDGE_MAX_TOKENS,
+            temperature=JUDGE_TEMPERATURE,
+            response_format={"type": "json_object"},
+        )
     )
-    return _parse(reply.choices[0].message.content)
 
 
 def _parse(raw):
@@ -155,33 +124,12 @@ def evaluate(transcript, question, ideal_answer, level="advanced"):
     }
 
 
-def _check_backends():
-    """The judge seam: JUDGE_URL picks the backend, and nothing else has to change."""
-    saved = {k: os.environ.get(k) for k in ("JUDGE_URL", "JUDGE_MODEL")}
-    try:
-        os.environ.pop("JUDGE_URL", None)
-        _judge_client.cache_clear()
-        assert _judge_client() is _client(), "no JUDGE_URL must mean the HF client"
-
-        for url in ("http://localhost:11434/v1", "https://api.openai.com/v1"):
-            os.environ["JUDGE_URL"] = url
-            _judge_client.cache_clear()
-            client = _judge_client()
-            assert client is not _client(), f"{url} must not reuse the HF client"
-            assert client.model == url, f"{url} not applied: {client.model}"
-    finally:
-        for key, value in saved.items():
-            os.environ[key] = value if value is not None else ""
-            if value is None:
-                del os.environ[key]
-        _judge_client.cache_clear()
-
-
 def demo():
-    """Self-check: parsing, weighting and backend selection, with the judge stubbed out."""
-    global _judge
+    """Self-check: parsing and per-level weighting, with the judge stubbed out.
 
-    _check_backends()
+    Which backend serves the judge is `inference.demo()`'s business now, not this one's.
+    """
+    global _judge
 
     assert (
         _parse(

@@ -13,12 +13,10 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from app import setup_logging
-from app.evaluate import _client, evaluate
+from app.evaluate import evaluate
 from app.worker import start as start_worker
 from app.worker import stop as stop_worker
 from src.constants.constants import (
-    ASR_MODEL,
-    ASR_OPTIONS,
     COOKIE_MAX_AGE,
     COOKIE_NAME,
     LEVELS,
@@ -29,6 +27,7 @@ from src.constants.constants import (
 )
 from src.constants.filepaths import INDEX_HTML
 from src.db import store
+from src.helpers.inference import transcribe
 from src.helpers.security import sign, unsign
 
 setup_logging()  # also covers `uvicorn app.main:app`, which never calls run()
@@ -49,7 +48,7 @@ async def lifespan(app: FastAPI):
     stop_worker()
 
 
-app = FastAPI(title="Mock Interview Practice", lifespan=lifespan)
+app = FastAPI(title="Placemint.Academy", lifespan=lifespan)
 
 
 def current_user(session: str | None = Cookie(None, alias=COOKIE_NAME)) -> dict:
@@ -285,10 +284,7 @@ def _grade_now(question, level, raw):
     """
     try:
         started = time.perf_counter()
-        result = _client().automatic_speech_recognition(
-            raw, model=ASR_MODEL, extra_body=ASR_OPTIONS
-        )
-        transcript = result.text.strip()
+        transcript = transcribe("asr", raw)
         log.info(
             "asr ok in %.1fs — %d words", time.perf_counter() - started, len(transcript.split())
         )

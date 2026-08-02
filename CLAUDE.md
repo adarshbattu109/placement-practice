@@ -2,11 +2,19 @@
 
 ## Project Overview
 
-placement-practice is a spoken mock-interview trainer. The browser records an answer, the
+**Placemint.Academy** is a spoken mock-interview trainer. The browser records an answer, the
 server transcribes it and an LLM judge grades it on Completeness, Correctness and Relevance
 against the question's ideal answer, weighted by the candidate's stated expertise level.
 
-Everything runs on the HuggingFace Inference API — **no model weights are ever downloaded**.
+The product is `Placemint.Academy`; the repo, the package and the `practice` script stay
+`placement-practice`. The name belongs in user-facing copy — the page title, the wordmark, the
+report header, the FastAPI title — and nowhere in an import path or a distribution name.
+`COOKIE_NAME` is `placemint_session`; it was renamed with the product, which signed out every
+existing session once.
+
+Every model call is remote — **no model weights are ever downloaded**. The HuggingFace
+Inference API is the default for all three roles; `ENDPOINTS` in `src/constants/constants.py`
+is where any of them is pointed somewhere else.
 
 ## Build & Run
 
@@ -31,15 +39,18 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
 - **`app/main.py`** — the FastAPI app and routes. Owns audio decoding, the silence gate, the
   `lifespan` that runs the worker, and the `current_user` dependency. Holds no grading logic
   and no SQL.
-- **`app/evaluate.py`** — the grader. Owns the judge prompt, the backend seam, parsing and
-  weighting. Knows nothing about HTTP, audio or FastAPI.
+- **`app/evaluate.py`** — the grader. Owns the judge prompt, parsing and weighting. Knows
+  nothing about HTTP, audio, FastAPI, or which model answers.
 - **`app/worker.py`** — the background thread that drains `jobs`: ASR, then the judge, then
   re-average the sitting. Owns both remote calls' retry policy and the hourly recording
   sweep. Knows nothing about HTTP; it reads and writes the same tables the routes do.
 - **`app/index.html`** — the whole frontend, one file, no build step. Served by `GET /`
   from the same origin, so there is no CORS config to keep in sync.
-- **`src/constants/`** — `constants.py` (models, `LEVELS`, auth and gate thresholds) and
+- **`src/constants/`** — `constants.py` (`ENDPOINTS`, `LEVELS`, auth and gate thresholds) and
   `filepaths.py` (every path, resolved once from the repo root).
+- **`src/helpers/inference.py`** — every remote model call and the client construction behind
+  it. `chat()` and `transcribe()` take a role name, not a model or a url. **The only file that
+  builds an inference client.**
 - **`src/helpers/security.py`** — `scrypt` password hashing and `hmac` cookie signing. Stdlib.
 - **`src/db/`** — `schema.sql` and `store.py`. **`store.py` is the only file that contains SQL.**
 - **`data/questions.json`** — the seed for the question bank, loaded into SQLite on first
@@ -49,6 +60,12 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
 
 **Import direction:** `app.main` → `app.worker` → `app.evaluate` → `src.*`. Nothing under
 `src/` imports FastAPI or knows an HTTP request exists. Never the reverse.
+
+**One config table for every endpoint.** `ENDPOINTS` in `src/constants/constants.py` holds
+`{model, url, timeout}` per role — `asr`, `judge`, `tts` — and every field is overridable by
+`<ROLE>_MODEL`, `<ROLE>_URL`, `<ROLE>_KEY`, `<ROLE>_TIMEOUT`. A model name or a base url
+anywhere else in the tree is a bug. Empty `url` means HuggingFace; a url set means any
+OpenAI-shaped server (Groq, OpenAI, vLLM, LM Studio, Ollama), which is one wire format.
 
 ## Code Style
 
@@ -64,7 +81,17 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
 
 - **Cloud-only inference.** `openai/whisper-large-v3` for ASR (language pinned to `en` so
   accented English is transcribed, never translated), `meta-llama/Llama-3.3-70B-Instruct`
-  as judge with `response_format={"type": "json_object"}`.
+  as judge with `response_format={"type": "json_object"}`. Both are defaults in `ENDPOINTS`,
+  not literals at the call site.
+- **`chat()` is one call, `transcribe()` has to branch.** Both backends speak
+  chat-completions, and `InferenceClient` takes a `base_url`, so the judge needs no branch at
+  all. ASR genuinely differs: HuggingFace takes raw bytes on its own client, everyone else
+  takes a multipart upload at `POST /audio/transcriptions`. The upload is named `take.wav` or
+  `take.ogg` by sniffing the header — both providers read the container off the extension.
+- **Every endpoint timeout must stay under `JOB_STALE_MINUTES`.** Asserted at import in
+  `constants.py`. A longer timeout means the worker is still waiting on a call the watchdog
+  has already declared dead, so the job runs twice — which looks like a duplicate charge and
+  nothing else.
 - **Nothing slow happens in the request.** `/submit` stores the take, queues a job and
   answers **202** `{question_id, queued, report}`; ASR and the judge both run in the worker
   and the browser polls. Two cases still come back graded inline with `queued: false` — a
@@ -153,9 +180,12 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
 Non-trivial logic leaves one runnable check behind, and everything runs from one command:
 `uv run python -m tests`. It is wired into CI and into a `pre-push` pre-commit stage.
 
-- Module self-checks — `demo()` in `security.py`, `store.py`, `evaluate.py`, `worker.py`. Add
-  to these rather than building a per-function suite. `worker.demo()` stubs both remote calls
-  and drives the queue with `step()` rather than a thread, so it needs no clock.
+- Module self-checks — `demo()` in `security.py`, `inference.py`, `store.py`, `evaluate.py`,
+  `worker.py`. Add to these rather than building a per-function suite. `worker.demo()` stubs
+  both remote calls and drives the queue with `step()` rather than a thread, so it needs no
+  clock. `inference.demo()` covers the routing table and both call shapes with stub clients,
+  so a provider swap is checked without a request; it saves and restores every `<ROLE>_*`
+  variable it touches, since the suite shares one process.
 - `tests/test_api.py` — every route through a `TestClient` against a temp database.
 - `tests/test_frontend.py` — `index.html` has no build step, so a mistyped `$('id')` fails
   silently. This walks every id and every fetched route and checks they exist. Templated urls

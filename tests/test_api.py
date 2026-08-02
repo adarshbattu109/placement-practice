@@ -11,6 +11,8 @@ import pathlib
 import tempfile
 import wave
 
+from src.constants.constants import COOKIE_NAME
+
 SILENCE_SECONDS = 2
 GATED = ("/me", "/topics", "/questions", "/history", "/assessments/1")
 
@@ -102,7 +104,7 @@ def _check_signup(client):
         "name": "Ada",
         "default_level": "expert",
     }, res.json()
-    assert client.cookies.get("booth_session"), "signup must sign the new account straight in"
+    assert client.cookies.get(COOKIE_NAME), "signup must sign the new account straight in"
     assert client.post("/signup", data=fields).status_code == 409, "duplicate email must conflict"
 
 
@@ -132,10 +134,10 @@ def _check_login(client):
     assert client.get("/me").json()["name"] == "Ada"
 
     # A forged cookie must open nothing, however far in the future it claims to expire.
-    real = client.cookies.get("booth_session")
-    client.cookies.set("booth_session", "1.9999999999.deadbeef")
+    real = client.cookies.get(COOKIE_NAME)
+    client.cookies.set(COOKIE_NAME, "1.9999999999.deadbeef")
     assert client.get("/me").status_code == 401, "an unsigned cookie must be refused"
-    client.cookies.set("booth_session", real)
+    client.cookies.set(COOKIE_NAME, real)
 
 
 def _check_submit(client):

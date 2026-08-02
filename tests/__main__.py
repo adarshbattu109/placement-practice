@@ -12,6 +12,7 @@ import traceback
 import app.evaluate
 import app.worker
 import src.db.store
+import src.helpers.inference
 import src.helpers.security
 from tests import test_api, test_frontend, test_packaging
 
@@ -19,6 +20,7 @@ from tests import test_api, test_frontend, test_packaging
 # importlib for a list this short.
 CHECKS = (
     ("security", src.helpers.security.demo),
+    ("inference", src.helpers.inference.demo),
     ("store", src.db.store.demo),
     ("evaluate", app.evaluate.demo),
     # Before the route checks: both rebind store.DB_PATH, and the worker's runs on a temp

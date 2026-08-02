@@ -10,15 +10,14 @@ import logging
 import threading
 import time
 
-from app.evaluate import _client, evaluate
+from app.evaluate import evaluate
 from src.constants.constants import (
-    ASR_MODEL,
-    ASR_OPTIONS,
     JOB_STALE_MINUTES,
     RECORDING_RETENTION_DAYS,
     WORKER_POLL_SECONDS,
 )
 from src.db import store
+from src.helpers.inference import transcribe
 
 log = logging.getLogger("app.worker")
 
@@ -131,10 +130,7 @@ def _transcribe(job):
     if take is None:
         raise RuntimeError("no recording stored for this answer")
 
-    result = _client().automatic_speech_recognition(
-        take["audio"], model=ASR_MODEL, extra_body=ASR_OPTIONS
-    )
-    transcript = result.text.strip()
+    transcript = transcribe("asr", take["audio"])
     log.info("asr %s — %d words", job["question_id"], len(transcript.split()))
 
     store.save_answer(job["assessment_id"], job["question_id"], transcript, take["seconds"] or 0.0)
@@ -172,7 +168,7 @@ def demo():
     import pathlib
     import tempfile
 
-    global _client, evaluate
+    global evaluate, transcribe
 
     with tempfile.TemporaryDirectory() as tmp:
         db = pathlib.Path(tmp) / "w.db"
@@ -186,22 +182,14 @@ def demo():
             store.enqueue(sitting, q["id"], path=db)
 
         heard = "a hash map hashes the key to a bucket and collisions chain in that bucket"
-        real_client, real_evaluate = _client, evaluate
-        _client = lambda: type(
-            "Stub",
-            (),
-            {
-                "automatic_speech_recognition": lambda self, audio, **kw: type(
-                    "R", (), {"text": heard}
-                )()
-            },
-        )()
+        real_transcribe, real_evaluate = transcribe, evaluate
+        transcribe = lambda role, audio: heard
         evaluate = lambda t, q, i, level: {"score": 64, "parameters": {}, "comments": {}}
         try:
             # Two jobs, two stages each: four steps, then the queue is empty.
             assert [step() for _ in range(5)] == [True, True, True, True, False]
         finally:
-            _client, evaluate = real_client, real_evaluate
+            transcribe, evaluate = real_transcribe, real_evaluate
 
         assert store.assessment_jobs_left(sitting, path=db) == 0
         full = store.assessment(uid, sitting, path=db)

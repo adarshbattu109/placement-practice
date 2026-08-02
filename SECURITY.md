@@ -39,9 +39,15 @@ a third-party inference API. We take the following seriously:
   expires on its own (below); transcripts and scores do not. A 12-month archival window for
   whole sittings is specified for slice 8 and is **not** implemented yet — see the design
   doc. ponytail: no retention window on transcripts, add one if this is ever multi-tenant.
-- **Audio and transcripts leave the machine** — recorded answers are uploaded to the
-  HuggingFace Inference API for transcription and grading. Do not speak credentials,
-  personal data or anything confidential into an answer.
+- **Audio and transcripts leave the machine** — recorded answers are uploaded for
+  transcription and grading. Do not speak credentials, personal data or anything confidential
+  into an answer.
+- **Every provider you configure is another party seeing candidate speech.** `ENDPOINTS` in
+  `src/constants/constants.py` decides who that is: HuggingFace by default, or whoever
+  `ASR_URL`/`JUDGE_URL` names. Check the provider's retention and training policy before
+  pointing a role at it — the recording and the transcript are personal data whichever url
+  they go to. `<ROLE>_KEY` values are bearer credentials and belong in `.env.local` with the
+  rest; a url on `http://` outside localhost sends both the key and the audio in the clear.
 - **Recordings are also kept locally for 10 days** — each take is transcoded to Opus and
   stored in `data/practice.db` so a wrong transcript can be challenged against the original
   and ASR re-run without a re-recording. `RECORDING_RETENTION_DAYS` in

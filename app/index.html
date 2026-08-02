@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Booth — mock interview practice</title>
+<title>Placemint.Academy — mock interview practice</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -411,8 +411,8 @@
 <body data-phase="standby">
 <div class="wrap">
   <header class="strip">
-    <button class="mark" id="to-home" disabled>The <em>Booth</em></button>
-    <span class="mono-label" id="strip-sub">Interview practice</span>
+    <button class="mark" id="to-home" disabled>Placemint<em>.Academy</em></button>
+    <span class="mono-label" id="strip-sub">Learning | Assessment | Excellence</span>
     <span class="who" id="who" hidden>
       <span class="lamp" id="lamp">Standby</span>
       <span class="name" id="who-name"></span>
@@ -442,7 +442,7 @@
 
   <!-- 1b. Sign up ──────────────────────────────────────────────────── -->
   <section class="view gate" id="view-signup" hidden>
-    <h1 class="big">Set up your booth.</h1>
+    <h1 class="big">Set up your account.</h1>
     <p class="lede">Your name goes on the report. Your level sets the bar you're graded against — you can change it before every interview.</p>
     <form id="signup-form">
       <p class="oops" id="signup-oops" hidden></p>
@@ -611,7 +611,7 @@
       <button id="again">↻ Practise again</button>
     </div>
     <div class="sheet-head">
-      <div class="t">The Booth — interview report</div>
+      <div class="t">Placemint.Academy — interview report</div>
       <div class="m" id="sheet-meta"></div>
     </div>
     <div class="report" id="report" aria-live="polite"></div>
@@ -638,9 +638,11 @@ const $ = id => document.getElementById(id);
 const SEGMENTS = 24;
 const VIEWS = ['login', 'signup', 'home', 'dashboard', 'history', 'setup', 'interview', 'report'];
 const GATES = ['login', 'signup'];
-// What the strip says you are in, per view. Home is the only one with nothing above it.
+// The tagline, shown before you are signed in and on home — where there is no location to
+// report. Every other view replaces it with where you are.
+const TAGLINE = 'Learning | Assessment | Excellence';
 const WHERE = {
-  home: 'Home', dashboard: 'Take an assessment', history: 'Past assessments',
+  dashboard: 'Take an assessment', history: 'Past assessments',
   setup: 'Vocal · free tier', interview: 'Vocal · free tier', report: 'Report',
 };
 const PARAMS = ['completeness', 'correctness', 'relevance'];
@@ -669,7 +671,7 @@ function show(name) {
   // The wordmark is the way home from anywhere, so it is only inert on the login screen
   // and on home itself.
   $('to-home').disabled = gate || name === 'home';
-  $('strip-sub').textContent = gate ? 'Interview practice' : WHERE[name];
+  $('strip-sub').textContent = WHERE[name] ?? TAGLINE;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 

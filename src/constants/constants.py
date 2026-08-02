@@ -1,10 +1,29 @@
 """Models, grading calibration and gate thresholds — the knobs worth tuning."""
 
-# --- speech ---------------------------------------------------------------------
-# whisper-large-v3 handles Indian English well; pin the language so accented
-# input is never mistaken for another one and silently translated.
-ASR_MODEL = "openai/whisper-large-v3"
-ASR_OPTIONS = {"language": "en", "task": "transcribe"}
+# --- remote endpoints -----------------------------------------------------------
+# Every model call in the app resolves through this table — there is no model name and no
+# base url anywhere else. Each field is overridable per deployment by environment variable
+# (`ASR_URL`, `ASR_MODEL`, `ASR_KEY`, and the same three for JUDGE and TTS), read at call
+# time rather than import time because .env.local is loaded by app/__init__.py.
+#
+# An empty `url` means the HuggingFace Inference API. A url set means an OpenAI-shaped
+# server, which is one wire format shared by Groq, OpenAI, vLLM, LM Studio and Ollama — so
+# moving a role to another provider is two environment variables, not a code change.
+# `src/helpers/inference.py` is what reads this; see it for the two call shapes.
+#
+# whisper-large-v3 handles Indian English well; the language is pinned so accented input is
+# never mistaken for another one and silently translated.
+ASR_LANGUAGE = "en"
+ENDPOINTS = {
+    # Timeouts are per role because the calls are nothing alike: ASR is ~3s on a minute of
+    # speech, the judge is 20-60s, and Kokoro measured 72.9s for one sentence. All three
+    # must stay under JOB_STALE_MINUTES below, or the watchdog re-queues live work.
+    "asr": {"model": "openai/whisper-large-v3", "url": "", "timeout": 60},
+    "judge": {"model": "meta-llama/Llama-3.3-70B-Instruct", "url": "", "timeout": 120},
+    # The only text-to-speech model with a live provider on the Inference API: 82M params,
+    # served by fal-ai. espnet/* and facebook/mms-tts-eng return no provider.
+    "tts": {"model": "hexgrad/Kokoro-82M", "url": "", "timeout": 180},
+}
 
 # --- stored recordings ----------------------------------------------------------
 # The browser sends 16 kHz mono WAV, which is 32 kB per second — a 21-question
@@ -29,25 +48,18 @@ WORKER_POLL_SECONDS = 3
 # tries, then the job is parked with its error so the report can say what went wrong.
 MAX_JOB_ATTEMPTS = 3
 # A restart mid-job leaves the row 'running' with nobody working it, so anything claimed
-# longer ago than this is assumed dead and re-queued. Must exceed JUDGE_TIMEOUT below.
+# longer ago than this is assumed dead and re-queued. Must exceed every ENDPOINTS timeout,
+# which is asserted at the bottom of this file.
 JOB_STALE_MINUTES = 5
 
-# The only text-to-speech model with a live provider on the Inference API: 82M
-# params, served by fal-ai. espnet/* and facebook/mms-tts-eng return no provider.
-TTS_MODEL = "hexgrad/Kokoro-82M"
+# --- generated speech -----------------------------------------------------------
 # Opus only encodes at 8/12/16/24/48 kHz; 24k is transparent for a single voice.
 TTS_OPUS_RATE = 24000
 
 # --- judge ----------------------------------------------------------------------
-# The default routes to the HF Inference API. Set JUDGE_URL to http://localhost:11434/v1
-# for Ollama or https://api.openai.com/v1 for OpenAI, with JUDGE_MODEL to match — all
-# three speak the same chat-completions shape, so the calling code does not change.
-# Read from the environment at call time, not import time, because .env.local is loaded
-# by app/__init__.py and this module must not care who imports it first.
-JUDGE_MODEL_DEFAULT = "meta-llama/Llama-3.3-70B-Instruct"
+# Sampling, not routing — the model and the url live in ENDPOINTS above.
 JUDGE_MAX_TOKENS = 900
 JUDGE_TEMPERATURE = 0.2
-JUDGE_TIMEOUT = 120
 
 # --- auth -----------------------------------------------------------------------
 # scrypt cost. n=2**14 is ~22ms here; OpenSSL's default 32 MB cap rejects anything
@@ -59,7 +71,7 @@ SCRYPT_PARALLEL = 1
 SCRYPT_DKLEN = 32
 SCRYPT_SALT_BYTES = 16
 
-COOKIE_NAME = "booth_session"
+COOKIE_NAME = "placemint_session"
 COOKIE_MAX_AGE = 14 * 24 * 60 * 60  # two weeks
 MIN_PASSWORD = 8
 
@@ -109,3 +121,10 @@ LEVELS = {
 for _name, _spec in LEVELS.items():
     assert set(_spec["weights"]) == set(PARAMETERS), f"{_name}: weights must cover {PARAMETERS}"
     assert abs(sum(_spec["weights"].values()) - 1) < 1e-9, f"{_name}: weights must sum to 1"
+
+# A timeout longer than the watchdog window means the worker is still waiting on a call the
+# watchdog has already declared dead, so the same job runs twice. Caught here rather than in
+# production, where it looks like a duplicate charge and nothing else.
+for _role, _spec in ENDPOINTS.items():
+    assert _spec.keys() == {"model", "url", "timeout"}, f"{_role}: unexpected endpoint fields"
+    assert _spec["timeout"] < JOB_STALE_MINUTES * 60, f"{_role}: timeout exceeds the stale window"
