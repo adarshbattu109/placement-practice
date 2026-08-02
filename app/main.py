@@ -8,6 +8,7 @@ import time
 import numpy as np
 import soundfile as sf
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from app import setup_logging
@@ -18,9 +19,11 @@ from src.constants.constants import (
     COOKIE_MAX_AGE,
     COOKIE_NAME,
     LEVELS,
+    MAX_UPLOAD_BYTES,
     MIN_PASSWORD,
     MIN_RMS,
     MIN_SECONDS,
+    RECORDING_RETENTION_DAYS,
 )
 from src.constants.filepaths import INDEX_HTML
 from src.db import store
@@ -30,6 +33,12 @@ setup_logging()  # also covers `uvicorn app.main:app`, which never calls run()
 log = logging.getLogger("app.api")
 
 store.setup()  # creates and seeds data/practice.db on first run
+
+# Stored audio expires; nothing else here does. Swept at startup because there is no
+# worker to hang it off yet — a long-running server keeps whatever it captured until the
+# next restart. ponytail: sweep on boot only, move to slice 4's worker poll.
+if _expired := store.prune_recordings():
+    log.info("pruned %d recording(s) past the %d-day window", _expired, RECORDING_RETENTION_DAYS)
 
 app = FastAPI(title="Mock Interview Practice")
 
@@ -201,6 +210,9 @@ async def submit(
         raise HTTPException(404, "No such open assessment.")
 
     raw = await audio.read()
+    if len(raw) > MAX_UPLOAD_BYTES:
+        log.warning("submit rejected: %d bytes exceeds the cap", len(raw))
+        raise HTTPException(413, f"That recording is over {MAX_UPLOAD_BYTES // 1024 // 1024} MB.")
     try:
         # The browser sends 16 kHz mono WAV; always_2d keeps the mean() below valid.
         samples, rate = sf.read(io.BytesIO(raw), dtype="float32", always_2d=True)
@@ -211,6 +223,9 @@ async def submit(
     mono = samples.mean(axis=1)
     seconds = len(mono) / rate
     log.info("submit %s level=%s audio=%.1fs %dkB", question_id, level, seconds, len(raw) // 1024)
+
+    # Before the gate and before ASR: whatever happens next, the take is the evidence.
+    await run_in_threadpool(_keep, assessment_id, question_id, mono, rate, seconds)
 
     # Whisper hallucinates fluent text ("Thank you very much...") from silence, so
     # never send it a dead recording. ponytail: flat RMS gate, no VAD.
@@ -253,6 +268,29 @@ async def submit(
     )
     _persist(assessment_id, question_id, transcript, seconds, report)
     return report
+
+
+def _keep(assessment_id, question_id, mono, rate, seconds):
+    """Store the take as Opus, so ASR can be re-run and a score can be disputed.
+
+    Opus rather than the WAV the browser sent: 9x smaller for the same 16 kHz speech, which
+    is what makes the retention window affordable. libsndfile encodes it in-process, so
+    this still needs no ffmpeg. Runs in the threadpool — it is ~1s of CPU per minute of
+    audio and would otherwise block the event loop.
+
+    Failing to store the take must not cost the candidate their report, so a storage or
+    encoder failure is logged and swallowed.
+    """
+    if assessment_id is None:
+        return  # a one-off curl submit: nothing to attach the take to
+    try:
+        buf = io.BytesIO()
+        sf.write(buf, mono, rate, format="OGG", subtype="OPUS")
+        opus = buf.getvalue()
+        store.save_recording(assessment_id, question_id, opus, seconds)
+        log.info("kept %s: %dkB opus from %.1fs", question_id, len(opus) // 1024, seconds)
+    except sqlite3.Error, sf.LibsndfileError, RuntimeError:
+        log.exception("could not store the take for %s", question_id)
 
 
 def _persist(assessment_id, question_id, transcript, seconds, report):

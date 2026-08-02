@@ -9,7 +9,7 @@ import contextlib
 import json
 import sqlite3
 
-from src.constants.constants import LEVELS
+from src.constants.constants import LEVELS, RECORDING_RETENTION_DAYS
 from src.constants.filepaths import DB_PATH, QUESTIONS_JSON, SCHEMA_SQL
 from src.helpers.security import hash_password, verify_password
 
@@ -257,6 +257,65 @@ def assessment(user_id, assessment_id, path=None):
     }
 
 
+# --- recordings ---------------------------------------------------------------------
+# The bytes are already encoded by the caller: nothing under src/ chooses a codec.
+
+
+def save_recording(assessment_id, question_id, audio, seconds, mime="audio/ogg", path=None):
+    """Store one take, replacing any earlier take of the same question."""
+    with connect(path) as conn:
+        return conn.execute(
+            "INSERT INTO recordings(assessment_id, question_id, audio, seconds, mime) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(assessment_id, question_id) DO UPDATE SET "
+            "  audio = excluded.audio, seconds = excluded.seconds, mime = excluded.mime,"
+            "  created_at = datetime('now')",
+            (assessment_id, question_id, audio, seconds, mime),
+        ).lastrowid
+
+
+def recording(assessment_id, question_id, path=None):
+    """One stored take, or None. `audio` materialises whole, so ask only when you need it."""
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT id, audio, mime, seconds, created_at FROM recordings"
+            " WHERE assessment_id IS ?1 AND question_id = ?2",
+            (assessment_id, question_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def untranscribed(limit=20, path=None):
+    """Takes with no answer row yet — what a re-run of ASR would work through.
+
+    Deliberately excludes `audio`: this is the queue query, and pulling every blob into
+    memory to list the queue would defeat the point of a separate table.
+    """
+    with connect(path) as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                "SELECT r.id, r.assessment_id, r.question_id, r.seconds, r.created_at"
+                " FROM recordings r LEFT JOIN answers a"
+                "   ON a.assessment_id IS r.assessment_id AND a.question_id = r.question_id"
+                " WHERE a.id IS NULL ORDER BY r.created_at LIMIT ?",
+                (limit,),
+            )
+        ]
+
+
+def prune_recordings(days=RECORDING_RETENTION_DAYS, path=None):
+    """Delete takes past the retention window. Returns how many went.
+
+    Audio is the only thing here with an expiry: transcripts and scores are the point of
+    the product, the recording is evidence with a shelf life.
+    """
+    with connect(path) as conn:
+        return conn.execute(
+            "DELETE FROM recordings WHERE created_at < datetime('now', ?)", (f"-{days} days",)
+        ).rowcount
+
+
 def demo():
     """Self-check against a throwaway database: seeding, signup, login, isolation."""
     import os
@@ -301,10 +360,11 @@ def demo():
             pass
 
         _check_assessments(db, uid)
+        _check_recordings(db, uid)
 
     print(
         f"ok — {len(bank)} questions seeded, signup/login round-trips, duplicates rejected, "
-        "assessments persist and stay per-user"
+        "assessments persist and stay per-user, takes round-trip and expire"
     )
 
 
@@ -351,6 +411,48 @@ def _check_assessments(db, uid):
     assert assessment(other, sitting, path=db) is None, "one user must not read another's answers"
     assert not owns_assessment(other, open_sitting, path=db), "nor write to their sitting"
     assert history(other, path=db) == []
+
+
+def _check_recordings(db, uid):
+    """Bytes must come back byte-identical, a re-take must replace, and both must expire."""
+    qs = questions(path=db)[:2]
+    sitting = start_assessment(uid, None, "advanced", len(qs), path=db)
+
+    audio = bytes(range(256)) * 40  # every byte value, so a text round-trip would corrupt it
+    save_recording(sitting, qs[0]["id"], audio, 12.5, path=db)
+    stored = recording(sitting, qs[0]["id"], path=db)
+    assert stored["audio"] == audio, "a blob must survive the round-trip unchanged"
+    assert stored["seconds"] == 12.5 and stored["mime"] == "audio/ogg"
+    assert recording(sitting, "no-such-question", path=db) is None
+
+    # A re-take replaces rather than piling up, same as answers.
+    save_recording(sitting, qs[0]["id"], b"second take", 3.0, path=db)
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) c FROM recordings").fetchone()["c"] == 1
+    assert recording(sitting, qs[0]["id"], path=db)["audio"] == b"second take"
+
+    # A take with no answer row is what a re-run of ASR would pick up; once the answer
+    # lands it drops out of the queue.
+    save_recording(sitting, qs[1]["id"], b"waiting", 8.0, path=db)
+    assert len(untranscribed(path=db)) == 2
+    assert "audio" not in untranscribed(path=db)[0], "the queue query must not carry blobs"
+    save_answer(sitting, qs[1]["id"], "transcribed already", 8.0, path=db)
+    queued = untranscribed(path=db)
+    assert [q["question_id"] for q in queued] == [qs[0]["id"]], queued
+
+    assert prune_recordings(path=db) == 0, "a fresh take is inside the retention window"
+    with connect(db) as conn:  # backdate past the window rather than waiting a month
+        conn.execute("UPDATE recordings SET created_at = datetime('now', '-31 days')")
+    assert prune_recordings(path=db) == 2
+    assert recording(sitting, qs[0]["id"], path=db) is None
+
+    # Deleting the sitting takes its audio with it — the cascade is why foreign_keys is on.
+    save_recording(sitting, qs[0]["id"], b"cascade me", 5.0, path=db)
+    with connect(db) as conn:
+        conn.execute("DELETE FROM assessments WHERE id = ?", (sitting,))
+        assert conn.execute("SELECT count(*) c FROM recordings").fetchone()["c"] == 0, (
+            "deleting an assessment must delete its recordings"
+        )
 
 
 if __name__ == "__main__":

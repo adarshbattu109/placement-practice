@@ -63,6 +63,19 @@ FastAPI or knows an HTTP request exists. Never the reverse.
   as judge with `response_format={"type": "json_object"}`.
 - **Silence gate before ASR.** Whisper hallucinates fluent text from a dead recording, so
   `/submit` checks length and RMS and short-circuits to a zero report instead of calling it.
+- **The take is stored before anything can fail.** `_keep()` transcodes to Opus and writes
+  `recordings` *before* the silence gate, so a gate trip, an ASR 502 or a judge 502 all leave
+  the audio behind to re-run from. Opus because it is 9× smaller than the WAV the browser
+  sends (measured: 1875 KiB → 209 KiB per minute), which is what makes retention affordable;
+  `soundfile` encodes it in-process, so this still needs no ffmpeg. It runs in the threadpool
+  — ~1s of CPU per minute of audio would otherwise block the event loop.
+- **Audio expires, transcripts don't.** `RECORDING_RETENTION_DAYS` is the window to
+  challenge a transcription. `prune_recordings()` runs at startup. Scores and transcripts are
+  the product and have no expiry. This reverses the original spec decision — see the
+  amendment note in the design doc before arguing it back.
+- **A separate `recordings` table, never a column on `answers`.** A ~200 kB blob on the row
+  the history page reads would pull audio into every history query and rewrite the whole
+  overflow chain into the WAL on each re-take.
 - **Weighted scoring.** Each level in `LEVELS` carries a `weights` dict over the three
   parameters that must sum to 1 — asserted at import so a bad edit fails loudly. This is the
   calibration knob for the whole grader; expect to tune it.

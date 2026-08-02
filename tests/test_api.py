@@ -149,6 +149,32 @@ def _check_submit(client):
     )
 
 
+def _check_kept(sitting):
+    """The take reaches the database as decodable Opus, and the silence verdict survives it.
+
+    The gate short-circuits before ASR, so this is the one path a test can drive end to end
+    — and it is exactly the path where the take must still be kept.
+    """
+    import soundfile as sf
+
+    from src.db import store
+
+    kept = store.recording(sitting, "dsa-1")
+    assert kept, "the take must be stored even when the silence gate trips"
+    assert kept["mime"] == "audio/ogg"
+    assert abs(kept["seconds"] - SILENCE_SECONDS) < 0.05, kept["seconds"]
+    # Stored as Opus, not the WAV that was posted: it must be smaller and still readable.
+    assert len(kept["audio"]) < len(_silent_wav()), "the take should have been transcoded"
+    frames, rate = sf.read(io.BytesIO(kept["audio"]), dtype="float32")
+    assert rate == 16000 and len(frames) > 0, (rate, len(frames))
+
+    # A stored take with an answer row is not queued for re-transcription, and a silent
+    # answer keeps its zero verdict rather than looking un-transcribed.
+    assert [q["question_id"] for q in store.untranscribed()] == [], store.untranscribed()
+    silent = next(a for a in store.assessment(1, sitting)["answers"] if a["question_id"] == "dsa-1")
+    assert silent["transcript"] == "" and silent["score"] == 0, silent
+
+
 def _check_assessments(client):
     """A sitting from open to finish, then the two ways it must not leak."""
     silence = ("a.wav", _silent_wav(), "audio/wav")
@@ -164,6 +190,8 @@ def _check_assessments(client):
     for question_id in ("dsa-1", "dsa-2"):
         body = {"question_id": question_id, "level": "beginner", "assessment_id": sitting}
         assert client.post("/submit", data=body, files={"audio": silence}).status_code == 200
+
+    _check_kept(sitting)
 
     # An open sitting is not history yet, but its answers are already readable.
     assert client.get("/history").json() == []

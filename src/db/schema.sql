@@ -67,3 +67,23 @@ CREATE TABLE IF NOT EXISTS answers (
   -- twice and averaged in twice.
   UNIQUE (assessment_id, question_id)
 ) STRICT;
+
+-- The candidate's take, kept so a score can be disputed and so ASR can be re-run without
+-- asking them to record it again. A separate table, not a column on answers: a ~200 kB
+-- blob on the row the report page reads would drag the audio into every history query,
+-- and rewrite the whole overflow chain into the WAL on every re-take.
+CREATE TABLE IF NOT EXISTS recordings (
+  id            INTEGER PRIMARY KEY,
+  assessment_id INTEGER REFERENCES assessments(id) ON DELETE CASCADE,
+  question_id   TEXT NOT NULL REFERENCES questions(id),
+  audio         BLOB NOT NULL,                -- Opus in Ogg, transcoded from the sent WAV
+  mime          TEXT NOT NULL DEFAULT 'audio/ogg',
+  seconds       REAL NOT NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Mirrors answers: a re-take replaces the take it will be graded from. assessment_id is
+  -- NULL for a one-off curl submit, and SQLite treats NULLs as distinct, so those
+  -- accumulate rather than upsert. They are pruned on age like everything else.
+  UNIQUE (assessment_id, question_id)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS recordings_by_age ON recordings(created_at);

@@ -6,6 +6,20 @@
 ASR_MODEL = "openai/whisper-large-v3"
 ASR_OPTIONS = {"language": "en", "task": "transcribe"}
 
+# --- stored recordings ----------------------------------------------------------
+# The browser sends 16 kHz mono WAV, which is 32 kB per second — a 21-question
+# sitting is ~38 MB. Opus at the same rate is 9x smaller (measured: 1875 KiB of
+# speech → 209 KiB), so takes are transcoded once before they are stored. The rate
+# itself comes from the decoded upload, not from here.
+#
+# The window to challenge a transcription: long enough to notice a bad transcript and
+# re-run ASR against the original, short enough that candidate speech is not kept
+# indefinitely. ponytail: fixed retention for everyone, no per-user setting
+RECORDING_RETENTION_DAYS = 10
+# Nothing else caps the upload, and every stored byte is a byte on disk forever
+# until the sweep runs. 10 minutes of 16 kHz WAV is ~19 MB.
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
 # The only text-to-speech model with a live provider on the Inference API: 82M
 # params, served by fal-ai. espnet/* and facebook/mms-tts-eng return no provider.
 TTS_MODEL = "hexgrad/Kokoro-82M"
