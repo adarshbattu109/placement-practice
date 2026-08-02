@@ -16,6 +16,11 @@ Every model call is remote — **no model weights are ever downloaded**. The Hug
 Inference API is the default for all three roles; `ENDPOINTS` in `src/constants/constants.py`
 is where any of them is pointed somewhere else.
 
+Two of the three roles run per answer. **TTS does not:** the question bank is spoken once by
+`python -m src.helpers.speech` and served from `data/audio/` forever after. On-the-fly speech
+is expected to arrive with the telephonic and video formats, which is why the call sits behind
+`inference.speak()` rather than inside the build step.
+
 ## Build & Run
 
 ```bash
@@ -49,8 +54,11 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
 - **`src/constants/`** — `constants.py` (`ENDPOINTS`, `LEVELS`, auth and gate thresholds) and
   `filepaths.py` (every path, resolved once from the repo root).
 - **`src/helpers/inference.py`** — every remote model call and the client construction behind
-  it. `chat()` and `transcribe()` take a role name, not a model or a url. **The only file that
-  builds an inference client.**
+  it. `chat()`, `transcribe()` and `speak()` take a role name, not a model or a url. **The only
+  file that builds an inference client.**
+- **`src/helpers/speech.py`** — speaks the question bank to `data/audio/<voice>/<id>.opus`.
+  A build step run by hand, never reached from a request. Owns the re-encode; the remote call
+  is `inference.speak()`.
 - **`src/helpers/security.py`** — `scrypt` password hashing and `hmac` cookie signing. Stdlib.
 - **`src/db/`** — `schema.sql` and `store.py`. **`store.py` is the only file that contains SQL.**
 - **`data/questions.json`** — the seed for the question bank, loaded into SQLite on first
@@ -83,6 +91,17 @@ OpenAI-shaped server (Groq, OpenAI, vLLM, LM Studio, Ollama), which is one wire 
   accented English is transcribed, never translated), `meta-llama/Llama-3.3-70B-Instruct`
   as judge with `response_format={"type": "json_object"}`. Both are defaults in `ENDPOINTS`,
   not literals at the call site.
+- **Spoken questions are generated once, to disk — never in a request.** The bank is fixed and
+  every candidate hears the same sentences, so `python -m src.helpers.speech` writes
+  `data/audio/<voice>/<id>.opus` and `GET /questions/{id}/audio` serves the file. Measured 72.9s
+  to produce 4.5s of audio, so synthesising per request would be a minute of latency for
+  byte-identical output. Re-running skips whatever exists, which is how a topic added later gets
+  its audio. A missing file is a **404, not a synthesise** — the question is always there as text.
+- **The voice is in the path, not a suffix.** `data/audio/<voice>/<id>.opus`, so the four planned
+  personas are new directories rather than renaming every file and changing the url. `TTS_VOICES`
+  lists them and `TTS_VOICE_DEFAULT` must be in it, asserted at import. The voice rides in
+  `extra_body` because neither wire format has an argument for it — **a provider that ignores it
+  returns its default rather than an error**, so listen to a new voice before listing it.
 - **`chat()` is one call, `transcribe()` has to branch.** Both backends speak
   chat-completions, and `InferenceClient` takes a `base_url`, so the judge needs no branch at
   all. ASR genuinely differs: HuggingFace takes raw bytes on its own client, everyone else
@@ -107,6 +126,13 @@ OpenAI-shaped server (Groq, OpenAI, vLLM, LM Studio, Ollama), which is one wire 
 - **`rescore_assessment()` is not `finish_assessment()`.** `finish` closes the sitting and
   must be a no-op on a second call; `rescore` runs after every verdict so `overall` climbs as
   answers land. A sitting can be closed and still be grading.
+- **Every exit from a live interview goes through `leave()`.** Only `POST /finish` closes a
+  sitting, so navigating away from one leaves it stuck at "started" forever — the questions and
+  the takes only ever lived in that tab, and nothing can resume it. This shipped as a real bug.
+  The guard lives in one place because the crumb, the wordmark, sign-out and every `data-go`
+  would otherwise each need their own; `beforeunload` covers the tab close, which is the one
+  case where only the browser's own prompt is allowed. Abandoning is an explicit button, never
+  the default action, and it clears `state.assessment` so the guard stops firing.
 - **`history()` lists open sittings too.** It used to filter `finished_at IS NOT NULL`, which
   made an interview abandoned halfway look like it had never happened — and the dashboard is
   the only route back to one. `finished_at IS NULL` is what marks a row open. Listed is not
@@ -180,8 +206,10 @@ OpenAI-shaped server (Groq, OpenAI, vLLM, LM Studio, Ollama), which is one wire 
 Non-trivial logic leaves one runnable check behind, and everything runs from one command:
 `uv run python -m tests`. It is wired into CI and into a `pre-push` pre-commit stage.
 
-- Module self-checks — `demo()` in `security.py`, `inference.py`, `store.py`, `evaluate.py`,
-  `worker.py`. Add to these rather than building a per-function suite. `worker.demo()` stubs
+- Module self-checks — `demo()` in `security.py`, `inference.py`, `speech.py`, `store.py`,
+  `evaluate.py`, `worker.py`. `speech.demo()` stubs the model and rebinds
+  `filepaths.AUDIO_DIR` to a temp directory, so it proves the skip-what-exists behaviour
+  without a token and without writing into the committed bank. Add to these rather than building a per-function suite. `worker.demo()` stubs
   both remote calls and drives the queue with `step()` rather than a thread, so it needs no
   clock. `inference.demo()` covers the routing table and both call shapes with stub clients,
   so a provider swap is checked without a request; it saves and restores every `<ROLE>_*`
@@ -190,9 +218,11 @@ Non-trivial logic leaves one runnable check behind, and everything runs from one
 - `tests/test_frontend.py` — `index.html` has no build step, so a mistyped `$('id')` fails
   silently. This walks every id and every fetched route and checks they exist. Templated urls
   (`` `/assessments/${id}/finish` ``) are checked by shape, with the interpolation standing in
-  for one path parameter.
+  for one path parameter. `_check_exits()` asserts the interview guard is still wired, because
+  losing it silently strands a sitting rather than throwing anything.
 - `tests/test_packaging.py` — builds the wheel and asserts it ships `questions.json`,
-  `schema.sql` and `index.html`, and no local database.
+  `schema.sql`, `index.html` and every `.opus` in `data/audio/`, and no local database. The
+  audio matters because an installed copy cannot re-run the build step without a token.
 
 No network in any test: the judge is stubbed everywhere, and the two `/submit` paths
 exercised both stop short of a remote call — the silence gate short-circuits, and a loud take

@@ -33,6 +33,10 @@ packages = ["app", "src"]
 [tool.hatch.build.targets.wheel.force-include]
 "data/questions.json" = "data/questions.json"
 "src/db/schema.sql" = "src/db/schema.sql"
+# The spoken bank. A directory is safe here where data/ would not be: it holds only
+# generated .opus files, never the database. Whatever `python -m src.helpers.speech` has
+# produced ships; a question with no file simply has no audio, which the route handles.
+"data/audio" = "data/audio"
 
 [dependency-groups]
 dev = [

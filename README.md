@@ -55,7 +55,7 @@ switching a provider needs no code change.
 |------|---------|------|
 | `ASR` | `openai/whisper-large-v3` | Transcribes the recorded answer |
 | `JUDGE` | `meta-llama/Llama-3.3-70B-Instruct` | Scores the transcript |
-| `TTS` | `hexgrad/Kokoro-82M` | Speaks the question aloud (not wired up yet) |
+| `TTS` | `hexgrad/Kokoro-82M` | Speaks the question aloud, once, at build time |
 
 Four variables per role, all optional:
 
@@ -125,6 +125,38 @@ recording (a real 3-second silence transcribed as *"Thank you very much."* ten t
 so a recording under a second or below an RMS of 0.005 short-circuits to a zero report
 instead of being sent.
 
+## Hearing the question
+
+Every candidate hears the same 21 sentences, so they are spoken **once, to disk**, and served
+as files thereafter:
+
+```bash
+uv run python -m src.helpers.speech            # the default voice, whatever is missing
+uv run python -m src.helpers.speech af_heart be-1   # one question, to audition a voice
+```
+
+Re-running it is free — anything already in `data/audio/` is skipped, so this is also how a
+topic added later gets its audio. The files are committed, so a clone has the spoken bank
+without a token. `GET /questions/{id}/audio` serves them and 404s for a question that has
+not been generated; the interview shows a **Hear it** button only when the audio loads, and
+the question is always there as text.
+
+Generating on demand was measured at **72.9s for 4.5s of audio** — a non-starter in a
+request, and the same bytes every time. Each question is ~19 kB as Opus at 24 kHz.
+
+Speech is the one role that can be pointed at a local server purely to avoid a bill, since
+nothing about it is in the request path:
+
+```
+TTS_URL=http://localhost:8880/v1
+TTS_MODEL=kokoro
+```
+
+`TTS_VOICES` in `src/constants/constants.py` lists the personas. Kokoro's names encode
+accent and gender (`af_` American female, `am_` American male, `bf_`/`bm_` British) — one
+voice is generated today, and the path is `data/audio/<voice>/<id>.opus` so adding more is
+new files rather than a migration.
+
 ## Grading
 
 The judge scores three parameters from 0–100:
@@ -170,6 +202,11 @@ anything. An unfinished sitting is listed under past assessments rather than hid
 cannot be resumed — the questions and the recordings only ever lived in the tab it started
 in, so the row offers to show what was recorded.
 
+Because of that, **leaving a live interview asks first.** Submitting is the only thing that
+closes a sitting, so every way out — the crumb, the wordmark, signing out, closing the tab —
+puts up the submit dialog, with "Leave without submitting" spelled out beside it rather than
+being what happens by accident.
+
 ## Modes
 
 | Mode | Question | Answer | Status |
@@ -200,10 +237,12 @@ app/
 src/
   constants/       ENDPOINTS, levels and weights, thresholds, every filepath
   helpers/         inference.py — every remote model call, and who serves it
+                   speech.py    — speaks the bank to disk; a build step, never a request
                    security.py  — scrypt passwords, hmac session cookies
   db/              schema.sql and store.py, the only file containing SQL
 data/
   questions.json   21 questions across 6 topics — the seed for a fresh database
+  audio/<voice>/   the bank spoken aloud, generated once and committed
   practice.db      accounts, the live question bank, past interviews (gitignored)
 tests/             the pre-push suite: uv run python -m tests
 logs/              rotating server.log (gitignored)
@@ -223,6 +262,7 @@ cookie and returns 401 without one.
 | `GET /me` | The signed-in profile, or 401 |
 | `GET /topics` | Available topics |
 | `GET /questions?topic=` | Questions, optionally filtered |
+| `GET /questions/{id}/audio` | The question spoken aloud, as Opus. 404 until the build step generates it |
 | `GET /levels` | `["beginner", "advanced", "expert"]` |
 | `POST /assessments` | Multipart: `level`, `questions`, `topic` → `{"id": n}`, an open sitting |
 | `POST /submit` | Multipart: `question_id`, `level`, `audio` (16 kHz mono WAV), `assessment_id` → **202** `{question_id, queued, report}` |
@@ -260,7 +300,8 @@ A report looks like:
 ## Development
 
 ```bash
-uv run python -m src.helpers.inference  # self-check: endpoint routing, both call shapes
+uv run python -m src.helpers.inference  # self-check: endpoint routing, all three call shapes
+uv run python -m src.helpers.speech     # generates the spoken bank — needs a token, unlike the rest
 uv run python -m app.evaluate           # self-check: parsing + weighting, judge stubbed
 uv run python -m app.worker             # self-check: the queue drains, failures park
 uv tool run ruff check .
@@ -310,6 +351,14 @@ No test touches the network, so none of them need `HF_TOKEN`.
   [SECURITY.md](SECURITY.md).
 - **Audio leaves your machine.** Recordings go to whichever provider `ASR_URL` names, the
   HuggingFace Inference API by default. Don't speak anything confidential.
+- **The spoken bank is incomplete.** Generating it needs credits, and HF's included monthly
+  allowance ran out one question in. The interview reads as text without it, and re-running
+  the build step fills the gaps.
+- **One voice, and the provider may be ignoring it.** The Inference API's TTS call has no
+  voice argument, so it goes through `extra_body` — and a provider that does not honour it
+  returns its default rather than an error. HF also routes Kokoro per accent
+  (`fal-ai/kokoro/american-english`), so a British voice may need a different endpoint
+  entirely. Listen to a new voice before adding it to `TTS_VOICES`.
 - **Switching a provider is not switching a result.** The endpoint table makes the swap free;
   the calibration behind it is not. `LEVELS` is tuned against 70B judge output, so a different
   judge needs its weights re-checked before its scores mean anything.

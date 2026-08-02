@@ -24,8 +24,9 @@ from src.constants.constants import (
     MIN_PASSWORD,
     MIN_RMS,
     MIN_SECONDS,
+    TTS_VOICE_DEFAULT,
 )
-from src.constants.filepaths import INDEX_HTML
+from src.constants.filepaths import AUDIO_DIR, INDEX_HTML, spoken
 from src.db import store
 from src.helpers.inference import transcribe
 from src.helpers.security import sign, unsign
@@ -141,6 +142,22 @@ def questions(topic: str | None = None, user: dict = Depends(current_user)):
 @app.get("/levels")
 def levels():
     return list(LEVELS)
+
+
+@app.get("/questions/{question_id}/audio")
+def question_audio(question_id: str, user: dict = Depends(current_user)):
+    """The question spoken aloud, if `python -m src.helpers.speech` has generated it.
+
+    404 when it has not, which is a normal state rather than a fault: the file is a build
+    artifact, and the interview reads the question as text either way. Nothing synthesises
+    on demand here — that would put a ~70s remote call in a GET.
+    """
+    take = spoken(question_id, TTS_VOICE_DEFAULT)
+    # resolve() before the check: a question_id of '../../etc/passwd' would otherwise walk
+    # out of the directory. Ids come from the database, but this one arrives in the url.
+    if not take.resolve().is_relative_to(AUDIO_DIR.resolve()) or not take.is_file():
+        raise HTTPException(404, "That question has not been recorded yet.")
+    return FileResponse(take, media_type="audio/ogg")
 
 
 @app.post("/assessments", status_code=201)

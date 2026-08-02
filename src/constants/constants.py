@@ -53,8 +53,23 @@ MAX_JOB_ATTEMPTS = 3
 JOB_STALE_MINUTES = 5
 
 # --- generated speech -----------------------------------------------------------
-# Opus only encodes at 8/12/16/24/48 kHz; 24k is transparent for a single voice.
+# Opus only encodes at 8/12/16/24/48 kHz — libsndfile refuses anything else outright — and
+# Kokoro returns 24 kHz, so this is the rate that needs no resample on the way to disk.
 TTS_OPUS_RATE = 24000
+# The bank is fixed and every candidate hears the same sentences, so a question is spoken
+# once by `python -m src.helpers.speech` and served from disk forever after. Generating per
+# request would pay 70s of latency and a fresh charge for byte-identical audio.
+#
+# Kokoro's voice names encode accent and gender: a/b = American/British, f/m = female/male.
+# One voice is generated today; the four are here because the interview stores which voice
+# it used, and a report replayed next week must not speak in a different one.
+# ponytail: whether the provider honours `voice` is unverified — the Inference API's TTS
+# call has no voice argument of its own, so it goes through extra_body and a provider that
+# ignores it silently returns the default. Confirm with one real call before listing more.
+TTS_VOICE_DEFAULT = "af_heart"
+TTS_VOICES = {
+    "af_heart": {"label": "Aria", "accent": "American", "gender": "female"},
+}
 
 # --- judge ----------------------------------------------------------------------
 # Sampling, not routing — the model and the url live in ENDPOINTS above.
@@ -128,3 +143,6 @@ for _name, _spec in LEVELS.items():
 for _role, _spec in ENDPOINTS.items():
     assert _spec.keys() == {"model", "url", "timeout"}, f"{_role}: unexpected endpoint fields"
     assert _spec["timeout"] < JOB_STALE_MINUTES * 60, f"{_role}: timeout exceeds the stale window"
+
+# A default outside the table would generate audio into a directory nothing ever serves.
+assert TTS_VOICE_DEFAULT in TTS_VOICES, f"{TTS_VOICE_DEFAULT} is not in TTS_VOICES"

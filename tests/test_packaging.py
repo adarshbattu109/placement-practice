@@ -7,7 +7,7 @@ build a wheel that starts up and then fails on the first query.
 import subprocess
 import zipfile
 
-from src.constants.filepaths import ROOT
+from src.constants.filepaths import AUDIO_DIR, ROOT
 
 SHIPPED = ("data/questions.json", "src/db/schema.sql", "app/index.html")
 
@@ -34,7 +34,16 @@ def check():
     leaked = [n for n in names if n.endswith((".db", ".db-wal", ".db-shm", ".env", ".env.local"))]
     assert not leaked, f"{wheel.name} must not carry local state: {leaked}"
 
-    print(f"ok — {wheel.name} ships the bank, schema and frontend, and no local state")
+    # data/audio is force-included as a whole directory, so whatever the build step has
+    # generated must arrive — an installed copy cannot re-run it without a token.
+    spoken = sorted(n for n in names if n.endswith(".opus"))
+    generated = sorted(f"data/audio/{p.parent.name}/{p.name}" for p in AUDIO_DIR.rglob("*.opus"))
+    assert spoken == generated, f"the wheel's spoken questions differ from data/audio: {spoken}"
+
+    print(
+        f"ok — {wheel.name} ships the bank, schema, frontend and "
+        f"{len(spoken)} spoken question(s), and no local state"
+    )
 
 
 if __name__ == "__main__":

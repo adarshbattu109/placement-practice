@@ -14,7 +14,14 @@ import wave
 from src.constants.constants import COOKIE_NAME
 
 SILENCE_SECONDS = 2
-GATED = ("/me", "/topics", "/questions", "/history", "/assessments/1")
+GATED = (
+    "/me",
+    "/topics",
+    "/questions",
+    "/questions/dsa-1/audio",
+    "/history",
+    "/assessments/1",
+)
 
 
 def _silent_wav(seconds=SILENCE_SECONDS, rate=16000):
@@ -119,6 +126,35 @@ def _check_bank(client):
     dsa = client.get("/questions?topic=DSA").json()
     assert dsa and len(dsa) < len(every) and all(q["topic"] == "DSA" for q in dsa)
     assert client.get("/questions?topic=Nope").status_code == 404
+
+
+def _check_spoken(client):
+    """The spoken question is served from disk when it exists, and 404s rather than synthesised.
+
+    The bank is only partly generated — the build step is a manual step and credits run out —
+    so an ungenerated question 404ing is the normal case, not a failure.
+    """
+    from src.constants.constants import TTS_VOICE_DEFAULT
+    from src.constants.filepaths import AUDIO_DIR, spoken
+
+    # Whichever questions have been generated, rather than a hardcoded id: the bank is
+    # generated a voice at a time and a fresh clone may have none of it.
+    every = {q["id"] for q in client.get("/questions").json()}
+    on_disk = sorted(f.stem for f in (AUDIO_DIR / TTS_VOICE_DEFAULT).glob("*.opus"))
+    for question_id in on_disk:
+        res = client.get(f"/questions/{question_id}/audio")
+        assert res.status_code == 200, (question_id, res.status_code)
+        assert res.headers["content-type"] == "audio/ogg", res.headers
+        assert res.content[:4] == b"OggS", "the served file must be the Ogg it was written as"
+    for question_id in sorted(every - set(on_disk)):
+        assert client.get(f"/questions/{question_id}/audio").status_code == 404, question_id
+    assert client.get("/questions/no-such-question/audio").status_code == 404
+    assert not spoken("no-such-question", TTS_VOICE_DEFAULT).exists()
+
+    # The id arrives in the url, so it must not be able to walk out of data/audio.
+    for escape in ("..%2f..%2f..%2fetc%2fpasswd", "..%2f..%2fpractice.db"):
+        got = client.get(f"/questions/{escape}/audio").status_code
+        assert got == 404, f"{escape} → {got}, must not read outside data/audio"
 
 
 def _check_login(client):
@@ -313,6 +349,7 @@ def check():
         _check_locked_out(client)
         _check_signup(client)
         _check_bank(client)
+        _check_spoken(client)
         _check_login(client)
         _check_submit(client)
         _check_isolation(client, _check_assessments(client))

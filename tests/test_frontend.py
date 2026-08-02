@@ -57,7 +57,38 @@ def check():
         "stale login hint still promises no storage"
     )
 
-    print(f"ok — {len(wanted)} element ids resolve, {len(called)} called routes exist")
+    _check_exits(html)
+
+    print(
+        f"ok — {len(wanted)} element ids resolve, {len(called)} called routes exist, "
+        "every exit from a live interview is guarded"
+    )
+
+
+def _check_exits(html):
+    """Nothing may navigate away from a live interview without going through leave().
+
+    A sitting is closed only by POST /finish, so walking out of one leaves it unfinished
+    forever with no route back — the questions and the takes only ever lived in that tab.
+    This is a real bug that shipped: a sitting sat at 'started' permanently.
+    """
+    # data-go covers the crumbs and the auth links, including the interview's own '← Setup'.
+    assert "b.onclick = () => leave(b.dataset.go)" in html, (
+        "data-go buttons must navigate through leave(), or the interview crumb abandons a sitting"
+    )
+    for handler, expected in (("to-home", "leave('home')"), ("sign-out", "interviewLive()")):
+        wired = re.search(rf"\$\('{handler}'\)\.onclick = [^;]*?;", html, re.DOTALL)
+        assert wired and expected in wired.group(), f"#{handler} must check for a live interview"
+
+    # The browser's own prompt is the only thing that can catch a tab close or a reload.
+    assert "beforeunload" in html, "a reload mid-interview must warn before it loses the takes"
+
+    # Abandoning has to clear the sitting, or the guard keeps firing on a sitting that is
+    # no longer being submitted.
+    abandon = re.search(r"\$\('abandon'\)\.onclick = [^}]*?\n\};", html, re.DOTALL)
+    assert abandon and "state.assessment = null" in abandon.group(), (
+        "abandoning must clear state.assessment"
+    )
 
 
 if __name__ == "__main__":

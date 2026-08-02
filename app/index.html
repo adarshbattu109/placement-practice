@@ -235,6 +235,9 @@
     color: var(--amber); border: 1px solid var(--amber-dim); border-radius: 999px; padding: .4rem .7rem;
   }
   .count { font: 400 .7rem/1 var(--mono); letter-spacing: .1em; color: var(--paper-dim); }
+  /* Sits with the chips rather than under the question: it is a property of the question,
+     not one of the recording controls below. Hidden until the audio is known to exist. */
+  .hear { margin-left: auto; padding: .4rem .75rem; font-size: .78rem; }
   #question {
     font-family: var(--display); font-weight: 600; letter-spacing: -.025em; line-height: 1.14;
     font-size: clamp(1.35rem, 3.6vw, 2.1rem); margin: 0; text-wrap: balance;
@@ -572,6 +575,7 @@
           <span class="chip" id="tag">—</span>
           <span class="count" id="count"></span>
           <span class="count" id="level-tag"></span>
+          <button class="ghost hear" id="hear" hidden>▶ Hear it</button>
         </div>
         <p id="question">Loading…</p>
       </div>
@@ -627,8 +631,11 @@
   <h3>Submit for evaluation?</h3>
   <p>This ends the interview. Your answers are transcribed and graded, and you can't re-record after this.</p>
   <div class="tally" id="tally"></div>
+  <p id="confirm-leaving" hidden>You're on your way out of the interview. Submitting is the only
+  thing that closes it — leave without submitting and this sitting stays unfinished for good.</p>
   <menu>
     <button class="ghost" id="confirm-cancel" autofocus>Keep practising</button>
+    <button class="ghost" id="abandon" hidden>Leave without submitting</button>
     <button class="key go" id="confirm-go">Submit for evaluation</button>
   </menu>
 </dialog>
@@ -737,7 +744,7 @@ function wireAuth(view, url) {
 wireAuth('login', '/login');
 wireAuth('signup', '/signup');
 
-$('sign-out').onclick = async () => {
+async function signOut() {
   await fetch('/logout', { method: 'POST' });
   stopPolling();                                // no fetching another account's history
   $('history-list').innerHTML = '';
@@ -747,6 +754,13 @@ $('sign-out').onclick = async () => {
   state.topic = '';
   setPhase('standby');
   show('login');
+}
+
+$('sign-out').onclick = () => {
+  // Signing out of a live interview would leave the sitting unfinished with no way back to
+  // it, so it asks first. 'login' routes back through here, so abandoning still logs out.
+  if (interviewLive()) return askToSubmit('login');
+  signOut();
 };
 
 // ── 2. Home ───────────────────────────────────────────────────────────
@@ -784,7 +798,7 @@ async function countUp() {
       : 'Practise out loud, then read the grading back. Everything you record stays here.';
 }
 
-$('to-home').onclick = () => openHome();
+$('to-home').onclick = () => leave('home');
 $('jack-take').onclick = () => show('dashboard');
 $('jack-past').onclick = () => openHistory();
 
@@ -849,7 +863,9 @@ function syncDial() {
   $('anchors').querySelectorAll('button').forEach(b => b.setAttribute('aria-current', Number(b.dataset.i) === i));
 }
 
-document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => show(b.dataset.go));
+// leave() rather than show(): the interview's own crumb is a data-go, and walking out of a
+// live sitting through it would leave it unfinished for good.
+document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => leave(b.dataset.go));
 
 // ── 2b. Past interviews ───────────────────────────────────────────────
 // Grading now finishes after the request that submitted it, so this page is where a
@@ -1035,6 +1051,7 @@ function showQuestion() {
   $('question').textContent = q.text;
   $('prev').disabled = state.index === 0;
   $('next').disabled = state.index === state.questions.length - 1;
+  loadSpoken(q.id);
   loadTake();
   buildNav();
   updateFinish();
@@ -1060,6 +1077,31 @@ function updateFinish() {
       ? `${total - done} question${total - done === 1 ? " still unrecorded — it'll" : "s still unrecorded — they'll"} score zero.`
       : 'Everything recorded.';
 }
+
+// The spoken question, if the build step has generated it. The button appears only once
+// the audio has loaded: offering to play something that 404s is worse than not offering.
+// Not preloaded for the whole set — most candidates read the question and start talking.
+const spoken = new Audio();
+
+function loadSpoken(id) {
+  const hear = $('hear');
+  hear.hidden = true;
+  spoken.pause();
+  spoken.src = `/questions/${id}/audio`;
+  hear.textContent = '▶ Hear it';
+}
+
+spoken.oncanplay = () => $('hear').hidden = false;
+spoken.onended = () => $('hear').textContent = '▶ Hear it';
+$('hear').onclick = () => {
+  if (spoken.paused) {
+    spoken.play();
+    $('hear').textContent = '❚❚ Pause';
+  } else {
+    spoken.pause();
+    $('hear').textContent = '▶ Hear it';
+  }
+};
 
 // Show whichever take belongs to the current question, if any.
 function loadTake() {
@@ -1182,17 +1224,66 @@ $('prev').onclick = () => { state.index--; showQuestion(); };
 $('next').onclick = () => { state.index++; showQuestion(); };
 
 // ── Confirm, then grade the whole interview ───────────────────────────
-$('finish').onclick = () => {
+// `leaving` is where to go if the candidate abandons, or null when they pressed Submit from
+// inside the interview. A sitting is only closed by /finish, so walking away from a live one
+// leaves it unfinished for good — hence the same dialog on the way out, not just at the end.
+let leaving = null;
+
+function askToSubmit(nextView = null) {
+  leaving = nextView;
   const total = state.questions.length, done = answered();
   $('tally').innerHTML = `
     <div><span>Questions</span><span>${total}</span></div>
     <div><span>Recorded</span><span>${done}</span></div>
     ${done < total ? `<div class="warn"><span>Unanswered (score 0)</span><span>${total - done}</span></div>` : ''}
     <div><span>Graded at</span><span>${escape(title(state.level))}</span></div>`;
+  $('confirm-leaving').hidden = !nextView;
+  $('abandon').hidden = !nextView;
+  // Nothing recorded yet: there is nothing to submit, so only the way out is offered.
+  $('confirm-go').hidden = !!nextView && done === 0;
   $('confirm').showModal();
+}
+
+$('finish').onclick = () => askToSubmit();
+
+// True while an opened sitting could still be submitted. `state.assessment` is set by
+// /assessments and cleared once /finish lands, so it is the only thing that says "open".
+const interviewLive = () => state.assessment !== null;
+
+// Home and history need their openers rather than a bare show() — one fills the greeting and
+// the readouts, the other fetches the sittings and starts the poll.
+const OPEN = { home: openHome, history: openHistory, login: signOut };
+const go = view => (OPEN[view] ?? (() => show(view)))();
+
+// Every way out of the interview routes through here rather than each button growing its own
+// check — the wordmark, the crumb, sign-out and every data-go would each need one.
+const leave = view => interviewLive() ? askToSubmit(view) : go(view);
+
+$('confirm-cancel').onclick = () => {
+  leaving = null;
+  $('confirm').close();
 };
 
-$('confirm-cancel').onclick = () => $('confirm').close();
+// Abandoning is deliberate and irreversible, so it is spelled out on the button rather than
+// being what happens when you click away. The takes are dropped: they only ever lived in
+// this tab, and the sitting cannot be written to again from a reload.
+$('abandon').onclick = () => {
+  const next = leaving;
+  $('confirm').close();
+  state.assessment = null;
+  state.takes.forEach(t => t && URL.revokeObjectURL(t.url));
+  state.takes = [];
+  state.questions = [];
+  leaving = null;
+  setPhase('standby');
+  go(next ?? 'dashboard');
+};
+
+// A tab close or a reload cannot be intercepted with a dialog of our own — the browser only
+// allows its own generic prompt, and only if the page asks for it here.
+window.addEventListener('beforeunload', e => {
+  if (interviewLive() && answered()) e.preventDefault();
+});
 
 $('confirm-go').onclick = async () => {
   $('confirm').close();

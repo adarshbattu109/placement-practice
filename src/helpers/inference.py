@@ -1,8 +1,9 @@
 """Every remote model call in the app, and the one place that decides who serves it.
 
-Two roles talk to models — the judge (chat) and ASR (transcription) — and each can point at
-a different provider. `ENDPOINTS` holds the defaults and the environment overrides them, so
-switching the judge to Ollama or ASR to Groq is two variables and no code change.
+Three roles talk to models — the judge (chat), ASR (transcription) and TTS (speech) — and
+each can point at a different provider. `ENDPOINTS` holds the defaults and the environment
+overrides them, so switching the judge to Ollama or ASR to Groq is two variables and no
+code change.
 
 There are only two wire formats to speak. An empty url means the HuggingFace Inference API
 and its own client; a url set means an OpenAI-shaped server, which is what Groq, OpenAI,
@@ -115,11 +116,40 @@ def _filename(audio):
     return "take.wav" if audio[:4] == b"RIFF" else "take.ogg"
 
 
+def speak(role, text, voice=None):
+    """Synthesise `text` and return the audio bytes, in whatever container the model returns.
+
+    Kokoro answers with a WAV, and the caller re-encodes it — nothing here chooses a codec.
+    `voice` rides in `extra_body` because the Inference API's TTS call has no voice argument
+    of its own; a provider that does not honour it returns its default voice rather than an
+    error, so a new voice needs listening to before it is added to `TTS_VOICES`.
+    """
+    at = endpoint(role)
+    extra = {"voice": voice} if voice else {}
+    if not at["url"]:
+        return _hub(at["timeout"]).text_to_speech(text, model=at["model"], extra_body=extra)
+
+    # The OpenAI shape, which is what every hosted TTS other than HuggingFace speaks.
+    reply = _openai(at["url"], at["key"], at["timeout"]).post(
+        "/audio/speech", json={"model": at["model"], "input": text} | extra
+    )
+    reply.raise_for_status()
+    return reply.content
+
+
 def demo():
-    """Self-check: the routing table, the environment overrides, and both call shapes."""
+    """Self-check: the routing table, the environment overrides, and all three call shapes."""
     saved = {
         k: os.environ.get(k)
-        for k in ("ASR_URL", "ASR_MODEL", "ASR_KEY", "ASR_TIMEOUT", "JUDGE_URL", "HF_TOKEN")
+        for k in (
+            "ASR_URL",
+            "ASR_MODEL",
+            "ASR_KEY",
+            "ASR_TIMEOUT",
+            "JUDGE_URL",
+            "TTS_URL",
+            "HF_TOKEN",
+        )
     }
 
     def restore():
@@ -202,6 +232,47 @@ def demo():
         assert seen["extra_body"]["language"] == ASR_LANGUAGE, seen
         assert seen["extra_body"]["task"] == "transcribe", seen
 
+        # TTS, both shapes. The voice has no argument of its own on either wire format, so
+        # it rides in extra_body — and it must not be sent at all when nobody asked for one.
+        spoke = {}
+
+        class HubTTS:
+            def text_to_speech(self, text, model, extra_body):
+                spoke.update(text=text, model=model, extra_body=extra_body)
+                return b"RIFFfake"
+
+        globals()["_hub"] = lambda timeout: HubTTS()
+        try:
+            assert speak("tts", "say this", voice="af_heart") == b"RIFFfake"
+            assert spoke["extra_body"] == {"voice": "af_heart"}, spoke
+            assert spoke["model"] == ENDPOINTS["tts"]["model"], spoke
+            speak("tts", "say this")
+            assert spoke["extra_body"] == {}, "no voice asked for, none sent"
+        finally:
+            globals()["_hub"] = real_hub
+
+        posted = {}
+
+        class OpenAITTS:
+            def post(self, path, json):
+                posted.update(path=path, json=json)
+                return type("R", (), {"raise_for_status": lambda s: None, "content": b"OggSfake"})()
+
+        os.environ["TTS_URL"] = "http://localhost:8880/v1"
+        globals()["_openai"] = lambda url, key, timeout: OpenAITTS()
+        try:
+            assert speak("tts", "say this", voice="am_puck") == b"OggSfake"
+        finally:
+            globals()["_openai"] = real
+            os.environ.pop("TTS_URL")
+            reset()
+        assert posted["path"] == "/audio/speech", posted["path"]
+        assert posted["json"] == {
+            "model": ENDPOINTS["tts"]["model"],
+            "input": "say this",
+            "voice": "am_puck",
+        }, posted["json"]
+
         # No token and no url is the one configuration that cannot work, and it must say so
         # rather than fail somewhere inside a client.
         os.environ.pop("HF_TOKEN")
@@ -214,7 +285,7 @@ def demo():
     finally:
         restore()
 
-    print(f"ok — {len(ENDPOINTS)} roles resolve, env overrides win, both call shapes dispatch")
+    print(f"ok — {len(ENDPOINTS)} roles resolve, env overrides win, chat/asr/tts all dispatch")
 
 
 if __name__ == "__main__":
