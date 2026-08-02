@@ -75,6 +75,23 @@ ASR_MODEL=whisper-large-v3-turbo
 ASR_KEY=gsk_...
 ```
 
+Or ASR on **Deepgram Nova-3**, which is not the OpenAI format — the url is what picks the
+call shape, so it is still three variables and no code change:
+
+```
+ASR_URL=https://api.deepgram.com/v1
+ASR_MODEL=nova-3
+ASR_KEY=...
+```
+
+Nova-3 costs $0.0048/minute against Groq's $0.0007, so it is not the cheap option. It was
+wired for what a pricing page doesn't say: **three seconds of silence comes back empty**,
+where Whisper hallucinates a fluent sentence — the exact failure the [silence
+gate](#how-it-works) exists to catch. Measured at 98.4% word agreement with Whisper on a
+technical answer, every term intact and the difference all punctuation. It also returns a
+confidence score per transcript (nothing stores it yet) and supports streaming, which the
+telephonic format will need. Signup gives $200 of credit without a card.
+
 Or the judge on a local Ollama — no key, no per-token cost, and the ASR bill untouched:
 
 ```

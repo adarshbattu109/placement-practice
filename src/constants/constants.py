@@ -9,11 +9,23 @@
 # An empty `url` means the HuggingFace Inference API. A url set means an OpenAI-shaped
 # server, which is one wire format shared by Groq, OpenAI, vLLM, LM Studio and Ollama — so
 # moving a role to another provider is two environment variables, not a code change.
-# `src/helpers/inference.py` is what reads this; see it for the two call shapes.
+# `src/helpers/inference.py` is what reads this; see it for the call shapes.
 #
 # whisper-large-v3 handles Indian English well; the language is pinned so accented input is
 # never mistaken for another one and silently translated.
 ASR_LANGUAGE = "en"
+# The one provider that is neither wire format, and only for ASR. Setting ASR_URL to it
+# switches `transcribe()` to Deepgram's shape — raw bytes, query parameters, `Token` auth:
+#
+#   ASR_URL=https://api.deepgram.com/v1
+#   ASR_MODEL=nova-3
+#   ASR_KEY=...
+#
+# A host match rather than a flag, because the url already says which provider it is and a
+# second variable that must agree with the first is a way to get it wrong. Measured against
+# whisper on identical bytes: 98.4% word match on a technical answer, and an empty transcript
+# at confidence 0.0 on three seconds of silence, where whisper hallucinates a sentence.
+DEEPGRAM_HOST = "api.deepgram.com"
 ENDPOINTS = {
     # Timeouts are per role because the calls are nothing alike: ASR is ~3s on a minute of
     # speech, the judge is 20-60s, and Kokoro measured 72.9s for one sentence. All three

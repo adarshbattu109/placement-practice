@@ -5,17 +5,18 @@ each can point at a different provider. `ENDPOINTS` holds the defaults and the e
 overrides them, so switching the judge to Ollama or ASR to Groq is two variables and no
 code change.
 
-There are only two wire formats to speak. An empty url means the HuggingFace Inference API
-and its own client; a url set means an OpenAI-shaped server, which is what Groq, OpenAI,
-vLLM, LM Studio and Ollama all serve. Knowing HTTP is the whole job of this module —
-nothing above it should ever construct a client or read a model name.
+The url picks the wire format. Empty means the HuggingFace Inference API and its own client;
+a url set means an OpenAI-shaped server, which is what Groq, OpenAI, vLLM, LM Studio and
+Ollama all serve. Deepgram is the one exception and only for ASR — it speaks neither shape,
+so `transcribe()` has a third branch keyed off the host. Knowing HTTP is the whole job of
+this module — nothing above it should ever construct a client or read a model name.
 """
 
 import functools
 import logging
 import os
 
-from src.constants.constants import ASR_LANGUAGE, ENDPOINTS
+from src.constants.constants import ASR_LANGUAGE, DEEPGRAM_HOST, ENDPOINTS
 
 log = logging.getLogger("app.inference")
 
@@ -50,11 +51,14 @@ def _hub(timeout):
 
 
 @functools.cache
-def _openai(url, key, timeout):
-    """A client for any OpenAI-shaped server. Cached, because it holds a connection pool."""
+def _openai(url, key, timeout, scheme="Bearer"):
+    """A client for any url-addressed provider. Cached, because it holds a connection pool.
+
+    `scheme` is only ever anything but `Bearer` for Deepgram, which 401s on one — checked.
+    """
     import httpx
 
-    return httpx.Client(base_url=url, headers={"Authorization": f"Bearer {key}"}, timeout=timeout)
+    return httpx.Client(base_url=url, headers={"Authorization": f"{scheme} {key}"}, timeout=timeout)
 
 
 def reset():
@@ -85,9 +89,10 @@ def chat(role, messages, **options):
 def transcribe(role, audio):
     """Transcribe `audio` bytes and return the text.
 
-    This is where the two backends genuinely differ: HuggingFace takes the raw bytes on its
-    own client, and everyone else takes a multipart upload at `POST /audio/transcriptions`.
-    Hence the branch — unlike `chat()`, one call cannot cover both.
+    This is where the backends genuinely differ. HuggingFace takes the raw bytes on its own
+    client; an OpenAI-shaped server takes a multipart upload at `POST /audio/transcriptions`;
+    Deepgram takes raw bytes with its options as query parameters. Hence the branches —
+    unlike `chat()`, one call cannot cover them.
     """
     at = endpoint(role)
     if not at["url"]:
@@ -98,6 +103,9 @@ def transcribe(role, audio):
         )
         return result.text.strip()
 
+    if DEEPGRAM_HOST in at["url"]:
+        return _deepgram(at, audio)
+
     reply = _openai(at["url"], at["key"], at["timeout"]).post(
         "/audio/transcriptions",
         files={"file": (_filename(audio), audio)},
@@ -107,6 +115,27 @@ def transcribe(role, audio):
     return reply.json()["text"].strip()
 
 
+def _deepgram(at, audio):
+    """Deepgram's own shape: raw bytes, options as query parameters, a nested reply.
+
+    Not the OpenAI format despite being a hosted api, and `Token` rather than `Bearer`, so
+    `_openai()`'s client cannot be reused. Worth the branch for one measured reason: on a
+    dead recording it returns an empty transcript at confidence 0.0 where Whisper invents
+    fluent text. `smart_format` is what punctuates and capitalises — the judge reads this.
+
+    ponytail: the confidence comes back and is dropped, because nothing stores it yet. It is
+    the signal that would separate "bad audio" from "bad answer" on a low score.
+    """
+    reply = _openai(at["url"], at["key"], at["timeout"], scheme="Token").post(
+        "/listen",
+        params={"model": at["model"], "language": ASR_LANGUAGE, "smart_format": "true"},
+        headers={"Content-Type": _mimetype(audio)},
+        content=audio,
+    )
+    reply.raise_for_status()
+    return reply.json()["results"]["channels"][0]["alternatives"][0]["transcript"].strip()
+
+
 def _filename(audio):
     """Name the upload after its container: both providers read the format off the extension.
 
@@ -114,6 +143,11 @@ def _filename(audio):
     the stored Opus take, and the WAV a `curl` submit sends straight through.
     """
     return "take.wav" if audio[:4] == b"RIFF" else "take.ogg"
+
+
+def _mimetype(audio):
+    """The same sniff as a Content-Type, which is how Deepgram is told the container."""
+    return "audio/" + _filename(audio).removeprefix("take.")
 
 
 def speak(role, text, voice=None):
@@ -187,6 +221,8 @@ def demo():
 
         assert _filename(b"RIFF....WAVE") == "take.wav"
         assert _filename(b"OggS\x00\x02") == "take.ogg"
+        assert _mimetype(b"RIFF....WAVE") == "audio/wav"
+        assert _mimetype(b"OggS\x00\x02") == "audio/ogg"
 
         # The OpenAI-shaped branch: the take must be posted as multipart to the right path,
         # with the model named in the form rather than the url.
@@ -212,7 +248,39 @@ def demo():
         assert sent["data"]["language"] == ASR_LANGUAGE, sent["data"]
         assert sent["files"]["file"][0] == "take.ogg", sent["files"]
 
+        # The Deepgram branch: same url-is-set path, but its own shape. Raw bytes rather than
+        # multipart, options as query parameters, `Token` auth, and the transcript nested
+        # three levels down. Chosen by the host in the url, with nothing else to set.
+        dg = {}
+
+        class Deepgram:
+            def post(self, path, params, headers, content):
+                dg.update(path=path, params=params, headers=headers, content=content)
+                body = {
+                    "results": {
+                        "channels": [
+                            {"alternatives": [{"transcript": " nova ", "confidence": 0.9}]}
+                        ]
+                    }
+                }
+                return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: body})()
+
+        os.environ |= {"ASR_URL": f"https://{DEEPGRAM_HOST}/v1", "ASR_MODEL": "nova-3"}
+        globals()["_openai"] = lambda url, key, timeout, scheme="Bearer": (
+            dg.update(scheme=scheme) or Deepgram()
+        )
+        try:
+            assert transcribe("asr", b"RIFF....WAVEfake") == "nova"
+        finally:
+            globals()["_openai"] = real
+        assert dg["path"] == "/listen", dg["path"]
+        assert dg["scheme"] == "Token", "Deepgram 401s on Bearer"
+        assert dg["params"] == {"model": "nova-3", "language": ASR_LANGUAGE, "smart_format": "true"}
+        assert dg["headers"]["Content-Type"] == "audio/wav", dg["headers"]
+        assert dg["content"] == b"RIFF....WAVEfake", "the bytes go up as-is, not as multipart"
+
         # The HuggingFace branch: raw bytes on the hub client, language pinned, no multipart.
+        os.environ["ASR_MODEL"] = "whisper-large-v3-turbo"
         os.environ.pop("ASR_URL")
         reset()
         seen = {}
@@ -285,7 +353,10 @@ def demo():
     finally:
         restore()
 
-    print(f"ok — {len(ENDPOINTS)} roles resolve, env overrides win, chat/asr/tts all dispatch")
+    print(
+        f"ok — {len(ENDPOINTS)} roles resolve, env overrides win, "
+        "chat/asr/tts dispatch, asr covers hf/openai/deepgram"
+    )
 
 
 if __name__ == "__main__":

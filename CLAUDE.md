@@ -74,6 +74,10 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
 `<ROLE>_MODEL`, `<ROLE>_URL`, `<ROLE>_KEY`, `<ROLE>_TIMEOUT`. A model name or a base url
 anywhere else in the tree is a bug. Empty `url` means HuggingFace; a url set means any
 OpenAI-shaped server (Groq, OpenAI, vLLM, LM Studio, Ollama), which is one wire format.
+Deepgram is the **one** exception, and only for `asr`: `DEEPGRAM_HOST` in the url switches
+`transcribe()` to its shape. A host match, not a second variable — the url already names the
+provider, and two variables that must agree are a way to get it wrong. A third exception
+needs a real reason; this one has three (below).
 
 ## Code Style
 
@@ -102,11 +106,21 @@ OpenAI-shaped server (Groq, OpenAI, vLLM, LM Studio, Ollama), which is one wire 
   lists them and `TTS_VOICE_DEFAULT` must be in it, asserted at import. The voice rides in
   `extra_body` because neither wire format has an argument for it — **a provider that ignores it
   returns its default rather than an error**, so listen to a new voice before listing it.
-- **`chat()` is one call, `transcribe()` has to branch.** Both backends speak
+- **`chat()` is one call, `transcribe()` has to branch three ways.** Both backends speak
   chat-completions, and `InferenceClient` takes a `base_url`, so the judge needs no branch at
-  all. ASR genuinely differs: HuggingFace takes raw bytes on its own client, everyone else
-  takes a multipart upload at `POST /audio/transcriptions`. The upload is named `take.wav` or
-  `take.ogg` by sniffing the header — both providers read the container off the extension.
+  all. ASR genuinely differs: HuggingFace takes raw bytes on its own client, an OpenAI-shaped
+  server takes a multipart upload at `POST /audio/transcriptions`, and Deepgram takes raw
+  bytes with its options as query parameters at `POST /listen`. The upload is named
+  `take.wav` or `take.ogg` by sniffing the header — every provider reads the container off
+  the extension, and Deepgram off the same sniff as a `Content-Type`.
+- **Deepgram earned its branch on measurements, not on price.** Whisper on Groq is cheaper
+  and already wired. Nova-3 was wired anyway for three things: three seconds of silence
+  comes back as `''` at confidence 0.0 where Whisper invents a fluent sentence (the failure
+  mode the silence gate exists for), it returns a per-transcript **confidence** the app has
+  no field for yet, and it streams — which is what the telephonic format will need. Measured
+  98.4% word match against Whisper on a technical answer, with every term intact; the gap was
+  punctuation. `Authorization: Token`, **not** `Bearer` — `Bearer` is a 401, verified, which
+  is why `_openai()` grew a `scheme`.
 - **Every endpoint timeout must stay under `JOB_STALE_MINUTES`.** Asserted at import in
   `constants.py`. A longer timeout means the worker is still waiting on a call the watchdog
   has already declared dead, so the job runs twice — which looks like a duplicate charge and
