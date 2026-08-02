@@ -1,6 +1,6 @@
 [project]
 name = "placement-practice"
-version = "0.1.0"
+version = "0.2.0"
 description = "Spoken mock-interview practice: record an answer, get it transcribed and graded"
 readme = "README.md"
 requires-python = ">=3.14"
