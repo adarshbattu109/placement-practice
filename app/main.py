@@ -1,5 +1,6 @@
 """Mock interview practice API. Speech runs on the HF Inference API; see evaluate for the judge."""
 
+import contextlib
 import io
 import logging
 import sqlite3
@@ -13,6 +14,8 @@ from fastapi.responses import FileResponse
 
 from app import setup_logging
 from app.evaluate import _client, evaluate
+from app.worker import start as start_worker
+from app.worker import stop as stop_worker
 from src.constants.constants import (
     ASR_MODEL,
     ASR_OPTIONS,
@@ -23,7 +26,6 @@ from src.constants.constants import (
     MIN_PASSWORD,
     MIN_RMS,
     MIN_SECONDS,
-    RECORDING_RETENTION_DAYS,
 )
 from src.constants.filepaths import INDEX_HTML
 from src.db import store
@@ -34,13 +36,20 @@ log = logging.getLogger("app.api")
 
 store.setup()  # creates and seeds data/practice.db on first run
 
-# Stored audio expires; nothing else here does. Swept at startup because there is no
-# worker to hang it off yet — a long-running server keeps whatever it captured until the
-# next restart. ponytail: sweep on boot only, move to slice 4's worker poll.
-if _expired := store.prune_recordings():
-    log.info("pruned %d recording(s) past the %d-day window", _expired, RECORDING_RETENTION_DAYS)
 
-app = FastAPI(title="Mock Interview Practice")
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run the grader for as long as the server runs, and not at import time.
+
+    At import this module is also loaded by the test suite, and a thread draining a
+    half-built temp database is nobody's idea of a fixture.
+    """
+    start_worker()
+    yield
+    stop_worker()
+
+
+app = FastAPI(title="Mock Interview Practice", lifespan=lifespan)
 
 
 def current_user(session: str | None = Cookie(None, alias=COOKIE_NAME)) -> dict:
@@ -164,12 +173,23 @@ def open_assessment(
 
 @app.post("/assessments/{assessment_id}/finish")
 def close_assessment(assessment_id: int, user: dict = Depends(current_user)):
-    """Close a sitting and return its average. Idempotent — a re-finish returns the same."""
+    """Close a sitting to further answers. Grading carries on in the worker after this.
+
+    Idempotent, and it does not wait: `overall` is whatever has been graded so far and the
+    worker raises it as verdicts land. `working` is what the browser polls on.
+    """
     if store.assessment(user["id"], assessment_id) is None:
         raise HTTPException(404, "No such assessment.")
     overall = store.finish_assessment(assessment_id)
-    log.info("assessment %d finished user=%d overall=%s", assessment_id, user["id"], overall)
-    return {"id": assessment_id, "overall": overall}
+    left = store.assessment_jobs_left(assessment_id)
+    log.info(
+        "assessment %d finished user=%d overall=%s awaiting=%d",
+        assessment_id,
+        user["id"],
+        overall,
+        left,
+    )
+    return {"id": assessment_id, "overall": overall, "working": left}
 
 
 @app.get("/history")
@@ -186,7 +206,7 @@ def one_assessment(assessment_id: int, user: dict = Depends(current_user)):
     return past
 
 
-@app.post("/submit")
+@app.post("/submit", status_code=202)
 async def submit(
     question_id: str = Form(...),
     audio: UploadFile = File(...),
@@ -194,6 +214,12 @@ async def submit(
     assessment_id: int | None = Form(None),
     user: dict = Depends(current_user),
 ):
+    """Store the take and queue it. Grading happens in the worker; nobody waits here.
+
+    202, not 200: the answer is accepted, not graded. A submit without an assessment_id has
+    nothing to queue against, so it grades inline — `curl -F question_id=... /submit` stays
+    a one-command way to exercise the whole chain.
+    """
     question = store.question(question_id)
     if question is None:
         log.warning("submit rejected: unknown question_id %r", question_id)
@@ -224,17 +250,39 @@ async def submit(
     seconds = len(mono) / rate
     log.info("submit %s level=%s audio=%.1fs %dkB", question_id, level, seconds, len(raw) // 1024)
 
-    # Before the gate and before ASR: whatever happens next, the take is the evidence.
+    # Before the gate and before anything can fail: the take is the evidence.
     await run_in_threadpool(_keep, assessment_id, question_id, mono, rate, seconds)
 
-    # Whisper hallucinates fluent text ("Thank you very much...") from silence, so
-    # never send it a dead recording. ponytail: flat RMS gate, no VAD.
+    # Whisper hallucinates fluent text ("Thank you very much...") from silence, so never
+    # send it a dead recording — and never spend a job on one either. The zero verdict is
+    # local and instant, so it is written here rather than queued.
+    # ponytail: flat RMS gate, no VAD.
     if seconds < MIN_SECONDS or float(np.sqrt(np.mean(mono**2))) < MIN_RMS:
         log.info("submit %s: silence gate tripped, skipping ASR", question_id)
         report = evaluate("", question["text"], question["ideal_answer"], level)
         _persist(assessment_id, question_id, "", seconds, report)
-        return report
+        return {"question_id": question_id, "queued": False, "report": report}
 
+    if assessment_id is None:
+        # No sitting to queue against, so grade inline: `curl -F question_id=... /submit`
+        # stays a one-command check of the whole chain, and there is nobody to poll.
+        return {
+            "question_id": question_id,
+            "queued": False,
+            "report": await run_in_threadpool(_grade_now, question, level, raw),
+        }
+
+    store.enqueue(assessment_id, question_id)
+    log.info("submit %s queued for assessment %d", question_id, assessment_id)
+    return {"question_id": question_id, "queued": True, "report": None}
+
+
+def _grade_now(question, level, raw):
+    """The old synchronous path, kept for a submit with no sitting behind it.
+
+    Runs in the threadpool because it blocks for ~25s on two remote calls. Nothing polls
+    for it, so a failure has to become a status rather than a queued retry.
+    """
     try:
         started = time.perf_counter()
         result = _client().automatic_speech_recognition(
@@ -244,30 +292,10 @@ async def submit(
         log.info(
             "asr ok in %.1fs — %d words", time.perf_counter() - started, len(transcript.split())
         )
+        return evaluate(transcript, question["text"], question["ideal_answer"], level)
     except Exception as e:
-        log.exception("asr failed for %s", question_id)
-        raise HTTPException(502, f"Speech-to-text failed: {e}") from e
-
-    try:
-        started = time.perf_counter()
-        report = evaluate(transcript, question["text"], question["ideal_answer"], level)
-    except Exception as e:
-        # Save the transcript even though grading failed. It is the expensive half — ASR
-        # already ran — and slice 4's worker retries from stored text, not from audio.
-        log.exception("grading failed for %s", question_id)
-        _persist(assessment_id, question_id, transcript, seconds, None)
-        raise HTTPException(502, f"Scoring failed: {e}") from e
-
-    log.info(
-        "graded %s level=%s in %.1fs — total=%d %s",
-        question_id,
-        level,
-        time.perf_counter() - started,
-        report["score"],
-        {p: v["score"] for p, v in report["parameters"].items()},
-    )
-    _persist(assessment_id, question_id, transcript, seconds, report)
-    return report
+        log.exception("inline grading failed for %s", question["id"])
+        raise HTTPException(502, f"Could not grade that answer: {e}") from e
 
 
 def _keep(assessment_id, question_id, mono, rate, seconds):

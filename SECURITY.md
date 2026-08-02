@@ -35,17 +35,19 @@ a third-party inference API. We take the following seriously:
 - **`data/practice.db` holds real accounts and past transcripts** — email addresses, scrypt
   password hashes, and every answer a candidate has given. It is gitignored, and
   `tests/test_packaging.py` fails the build if it reaches a wheel. Don't attach it to an issue.
-  There is no retention policy: deleting a user cascades to their answers, and nothing else
-  expires. ponytail: no retention window, add one if this is ever multi-tenant.
+  Deleting a user cascades to their answers, their recordings and their queued jobs. Audio
+  expires on its own (below); transcripts and scores do not. A 12-month archival window for
+  whole sittings is specified for slice 8 and is **not** implemented yet — see the design
+  doc. ponytail: no retention window on transcripts, add one if this is ever multi-tenant.
 - **Audio and transcripts leave the machine** — recorded answers are uploaded to the
   HuggingFace Inference API for transcription and grading. Do not speak credentials,
   personal data or anything confidential into an answer.
 - **Recordings are also kept locally for 10 days** — each take is transcoded to Opus and
   stored in `data/practice.db` so a wrong transcript can be challenged against the original
   and ASR re-run without a re-recording. `RECORDING_RETENTION_DAYS` in
-  `src/constants/constants.py` is the window; the sweep runs at startup. Deleting a user or
-  an assessment cascades to its audio. Transcripts and scores are **not** on that clock —
-  they are the product, and they persist.
+  `src/constants/constants.py` is the window; the grading worker sweeps hourly. Deleting a
+  user or an assessment cascades to its audio. Transcripts and scores are **not** on that
+  clock — they are the product, and they persist.
 - **Logs** — `logs/` is gitignored and deliberately records only latency and scores, never
   transcripts or audio. Keep it that way; a log of what candidates said is personal data.
 - **Auth is real but minimal** — passwords are hashed with `scrypt` and sessions are

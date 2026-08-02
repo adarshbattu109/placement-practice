@@ -26,6 +26,21 @@ def _silent_wav(seconds=SILENCE_SECONDS, rate=16000):
     return buf.getvalue()
 
 
+def _loud_wav(seconds=SILENCE_SECONDS, rate=16000):
+    """A tone well above the RMS gate, so /submit queues instead of short-circuiting.
+
+    A tone, not speech: nothing in the test suite transcribes it, and the queue is what is
+    under test. ponytail: full-scale square wave, the cheapest thing the gate accepts.
+    """
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(b"\x00\x40\x00\xc0" * (rate * seconds // 2))
+    return buf.getvalue()
+
+
 def _client(db):
     """A TestClient whose app talks to `db`.
 
@@ -128,8 +143,15 @@ def _check_submit(client):
     res = client.post(
         "/submit", data={"question_id": "dsa-1", "level": "beginner"}, files={"audio": silence}
     )
-    assert res.status_code == 200, res.text
-    assert res.json()["score"] == 0, "silence must score zero without reaching ASR"
+    assert res.status_code == 202, res.text
+    # Silence is graded on the spot rather than queued: the verdict is local, and spending
+    # an ASR call on a dead recording is exactly what the gate exists to prevent.
+    assert res.json() == {
+        "question_id": "dsa-1",
+        "queued": False,
+        "report": res.json()["report"],
+    }, res.json()
+    assert res.json()["report"]["score"] == 0, "silence must score zero without reaching ASR"
 
     assert (
         client.post("/submit", data={"question_id": "nope"}, files={"audio": silence}).status_code
@@ -189,7 +211,7 @@ def _check_assessments(client):
 
     for question_id in ("dsa-1", "dsa-2"):
         body = {"question_id": question_id, "level": "beginner", "assessment_id": sitting}
-        assert client.post("/submit", data=body, files={"audio": silence}).status_code == 200
+        assert client.post("/submit", data=body, files={"audio": silence}).status_code == 202
 
     _check_kept(sitting)
 
@@ -198,11 +220,17 @@ def _check_assessments(client):
     live = client.get(f"/assessments/{sitting}").json()
     assert len(live["answers"]) == 2 and live["overall"] is None, live
     assert live["answers"][0]["text"], "the question text comes back for the history page"
+    assert live["working"] == 0 and live["jobs"] == [], "silence never reaches the queue"
 
-    assert client.post(f"/assessments/{sitting}/finish").json() == {"id": sitting, "overall": 0}
+    assert client.post(f"/assessments/{sitting}/finish").json() == {
+        "id": sitting,
+        "overall": 0,
+        "working": 0,
+    }
     past = client.get("/history").json()
     assert len(past) == 1 and past[0]["answered"] == 2 and past[0]["overall"] == 0, past
     assert past[0]["finished_at"], "a finished sitting must carry its timestamp"
+    assert past[0]["working"] == 0 and past[0]["stuck"] == 0, past
 
     # A closed sitting takes no more answers, and it must fail before the ASR call.
     closed = {"question_id": "dsa-1", "level": "beginner", "assessment_id": sitting}
@@ -213,26 +241,61 @@ def _check_assessments(client):
     return sitting
 
 
+def _check_queued(client):
+    """A real take is queued, not graded in the request — the whole point of the slice.
+
+    Loud audio rather than silence, so the gate does not short-circuit. Nothing here calls
+    the worker, so the answer stays queued and the sitting reads as still being graded.
+    """
+    from src.db import store
+
+    res = client.post("/assessments", data={"level": "advanced", "questions": 1})
+    sitting = res.json()["id"]
+    body = {"question_id": "dsa-1", "level": "advanced", "assessment_id": sitting}
+    speech = ("a.wav", _loud_wav(), "audio/wav")
+
+    queued = client.post("/submit", data=body, files={"audio": speech})
+    assert queued.status_code == 202, queued.text
+    assert queued.json() == {"question_id": "dsa-1", "queued": True, "report": None}, queued.json()
+
+    # Queued means: a job waiting, a take stored, and no answer row yet — the transcript
+    # arrives with the worker, so a report page must not mistake this for an empty answer.
+    live = client.get(f"/assessments/{sitting}").json()
+    assert live["working"] == 1 and live["answers"] == [], live
+    assert [(j["kind"], j["status"]) for j in live["jobs"]] == [("transcribe", "pending")], live
+    assert store.recording(sitting, "dsa-1"), "the take must be stored before it is queued"
+
+    # Finishing does not wait for the queue: it closes writes and leaves grading running.
+    closed = client.post(f"/assessments/{sitting}/finish").json()
+    assert closed == {"id": sitting, "overall": None, "working": 1}, closed
+    assert client.get("/history").json()[0]["working"] == 1
+
+
 def _check_isolation(client, sitting):
-    """A second account must not read or write the first one's sitting."""
+    """A second account must not read or write the first one's sitting.
+
+    A bare TestClient, not `with TestClient(...)`: the context manager runs `lifespan`, which
+    starts the real grading worker, and a live worker in the same process as a queued job
+    would race it to a real ASR call. The worker has its own self-check.
+    """
     from fastapi.testclient import TestClient
 
     from app.main import app
 
-    with TestClient(app) as other:
-        signed = other.post(
-            "/signup", data={"email": "bob@example.com", "name": "Bob", "password": "x" * 12}
-        )
-        assert signed.status_code == 201, signed.text
-        assert other.get("/history").json() == [], "history is per account"
-        assert other.get(f"/assessments/{sitting}").status_code == 404, "not Bob's to read"
-        assert other.post(f"/assessments/{sitting}/finish").status_code == 404
-        filed = other.post(
-            "/submit",
-            data={"question_id": "dsa-1", "assessment_id": sitting},
-            files={"audio": ("a.wav", _silent_wav(), "audio/wav")},
-        )
-        assert filed.status_code == 404, "an answer must not land in another account's sitting"
+    other = TestClient(app)
+    signed = other.post(
+        "/signup", data={"email": "bob@example.com", "name": "Bob", "password": "x" * 12}
+    )
+    assert signed.status_code == 201, signed.text
+    assert other.get("/history").json() == [], "history is per account"
+    assert other.get(f"/assessments/{sitting}").status_code == 404, "not Bob's to read"
+    assert other.post(f"/assessments/{sitting}/finish").status_code == 404
+    filed = other.post(
+        "/submit",
+        data={"question_id": "dsa-1", "assessment_id": sitting},
+        files={"audio": ("a.wav", _silent_wav(), "audio/wav")},
+    )
+    assert filed.status_code == 404, "an answer must not land in another account's sitting"
 
 
 def check():
@@ -245,7 +308,11 @@ def check():
         _check_login(client)
         _check_submit(client)
         _check_isolation(client, _check_assessments(client))
-    print("ok — routes gated by cookie, signup/login round-trip, bank and sittings from sqlite")
+        _check_queued(client)
+    print(
+        "ok — routes gated by cookie, signup/login round-trip, sittings from sqlite, "
+        "a real take queues instead of grading in the request"
+    )
 
 
 if __name__ == "__main__":

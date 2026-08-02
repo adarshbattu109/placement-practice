@@ -47,17 +47,27 @@ browser                        server                      HuggingFace Inference
 MediaRecorder
   ↓ resample 16 kHz mono
   ↓ encode WAV
-  └── POST /submit ──────────→ decode + silence gate
+  └── POST /submit ──────────→ keep the take as Opus
                                    ↓
+                               silence gate
+                                   ↓
+                               queue one job
+  ←──────── 202 queued ─────────┘
+
+                               grading worker (background thread)
+                                   ↓ every 3s: claim one job
                                ASR ─────────────────────→ openai/whisper-large-v3
                                    ↓ transcript
                                judge ───────────────────→ meta-llama/Llama-3.3-70B-Instruct
                                    ↓ 3 scores + notes
-                               weight by level
-                                   ↓
-                               store the answer against the sitting
-  ←──────── JSON report ────────┘
+                               weight by level, store, re-average the sitting
+  GET /history (poll) ────────────→ ↓
+  ←──────── the queue draining ────┘
 ```
+
+Nobody waits on a spinner: ASR is ~3s and the judge is 20–60s, so a full sitting would be
+twenty minutes of staring. `/submit` returns as soon as the take is stored, and the history
+page polls until the scores land.
 
 The browser does the audio work — resampling and WAV encoding happen in
 `AudioContext`/`OfflineAudioContext`, so the server needs no ffmpeg.
@@ -122,6 +132,7 @@ app/
   __init__.py      entrypoint (uv run practice), TLS trust store, .env, logging
   main.py          FastAPI app and routes
   evaluate.py      the grader — judge prompt, parsing, weighting
+  worker.py        the background thread that drains the grading queue
   index.html       the entire frontend, one file, no build step
 src/
   constants/       models, levels and weights, thresholds, every filepath
@@ -150,13 +161,19 @@ cookie and returns 401 without one.
 | `GET /questions?topic=` | Questions, optionally filtered |
 | `GET /levels` | `["beginner", "advanced", "expert"]` |
 | `POST /assessments` | Multipart: `level`, `questions`, `topic` → `{"id": n}`, an open sitting |
-| `POST /submit` | Multipart: `question_id`, `level`, `audio` (16 kHz mono WAV), `assessment_id` → JSON report |
-| `POST /assessments/{id}/finish` | Closes the sitting, averaging its graded answers. Idempotent |
-| `GET /history` | Your finished sittings, newest first |
-| `GET /assessments/{id}` | One sitting with every answer. 404 for anyone else's |
+| `POST /submit` | Multipart: `question_id`, `level`, `audio` (16 kHz mono WAV), `assessment_id` → **202** `{question_id, queued, report}` |
+| `POST /assessments/{id}/finish` | Closes the sitting → `{id, overall, working}`. Idempotent, and it does not wait for the queue |
+| `GET /history` | Your sittings, newest first, each with `working` and `stuck` counts |
+| `GET /assessments/{id}` | One sitting with every answer and every unfinished job. 404 for anyone else's |
 
-`assessment_id` is optional on `/submit` — without it the answer is graded and returned but
-not stored, which keeps a one-off `curl` check working.
+`/submit` answers 202, not 200: the answer is accepted, not graded. `queued: true` means the
+report is `null` and the worker has it — poll `/history` or `/assessments/{id}`.
+
+Two cases come back graded on the spot instead, with `queued: false` and a report attached:
+a recording that trips the silence gate (the zero is local, and spending an ASR call on a
+dead recording is what the gate exists to prevent), and a submit with no `assessment_id`
+(there is no sitting to queue against and nobody to poll, so `curl -F question_id=…` stays a
+one-command check of the whole chain).
 
 A report looks like:
 
@@ -180,6 +197,7 @@ A report looks like:
 
 ```bash
 uv run python -m app.evaluate    # self-check: parsing + weighting, judge stubbed
+uv run python -m app.worker      # self-check: the queue drains, failures park
 uv tool run ruff check .
 uv tool run ruff format .
 ```
@@ -217,8 +235,11 @@ No test touches the network, so none of them need `HF_TOKEN`.
 
 - **Scores aren't reproducible.** The judge runs at `temperature=0.2`, so the same answer
   varies by a few points between runs.
-- **No retry on judge failure.** A transient 502 from the provider loses that recording.
-- **Reports aren't persisted.** Accounts are, but close the tab and the report is gone.
+- **A job gives up after three attempts.** ASR and the judge both fail transiently, so the
+  worker retries; past that the answer is parked with its error and the sitting reads as
+  partly graded. The take is still stored, so the fix is re-running it, not re-recording.
+- **One worker thread.** A job waits up to one 3-second poll per stage, and a sitting is
+  graded one answer at a time — a 20-question sitting takes 20 × ~25s to come back.
 - **No password reset,** and no way to revoke one session — rotating `SECRET_KEY` signs
   everyone out at once. Don't expose this server to an untrusted network; see
   [SECURITY.md](SECURITY.md).

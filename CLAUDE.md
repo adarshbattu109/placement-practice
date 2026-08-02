@@ -29,9 +29,13 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
   `load_dotenv()`, `setup_logging()`, and `run()` which starts uvicorn. Nothing else imports
   from here except `setup_logging`.
 - **`app/main.py`** — the FastAPI app and routes. Owns audio decoding, the silence gate, the
-  ASR call, and the `current_user` dependency. Holds no grading logic and no SQL.
+  `lifespan` that runs the worker, and the `current_user` dependency. Holds no grading logic
+  and no SQL.
 - **`app/evaluate.py`** — the grader. Owns the judge prompt, the backend seam, parsing and
   weighting. Knows nothing about HTTP, audio or FastAPI.
+- **`app/worker.py`** — the background thread that drains `jobs`: ASR, then the judge, then
+  re-average the sitting. Owns both remote calls' retry policy and the hourly recording
+  sweep. Knows nothing about HTTP; it reads and writes the same tables the routes do.
 - **`app/index.html`** — the whole frontend, one file, no build step. Served by `GET /`
   from the same origin, so there is no CORS config to keep in sync.
 - **`src/constants/`** — `constants.py` (models, `LEVELS`, auth and gate thresholds) and
@@ -43,8 +47,8 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
 - **`tests/`** — the pre-push suite. `python -m tests` runs the module `demo()`s plus the
   API, frontend and packaging checks.
 
-**Import direction:** `app.main` → `app.evaluate` → `src.*`. Nothing under `src/` imports
-FastAPI or knows an HTTP request exists. Never the reverse.
+**Import direction:** `app.main` → `app.worker` → `app.evaluate` → `src.*`. Nothing under
+`src/` imports FastAPI or knows an HTTP request exists. Never the reverse.
 
 ## Code Style
 
@@ -61,8 +65,27 @@ FastAPI or knows an HTTP request exists. Never the reverse.
 - **Cloud-only inference.** `openai/whisper-large-v3` for ASR (language pinned to `en` so
   accented English is transcribed, never translated), `meta-llama/Llama-3.3-70B-Instruct`
   as judge with `response_format={"type": "json_object"}`.
+- **Nothing slow happens in the request.** `/submit` stores the take, queues a job and
+  answers **202** `{question_id, queued, report}`; ASR and the judge both run in the worker
+  and the browser polls. Two cases still come back graded inline with `queued: false` — a
+  silence-gate trip (the zero is local) and a submit with no `assessment_id` (nothing would
+  poll for it, and `curl -F question_id=… /submit` stays a one-command check of the chain).
+- **One job row per take, not per stage.** `jobs.kind` advances `transcribe` → `grade`, so
+  `UNIQUE (assessment_id, question_id)` mirrors `answers` and `recordings` and a re-submit of
+  an open sitting resets the work instead of racing a duplicate job. `attempts` resets at each
+  stage — a flaky ASR call must not spend the judge's retries.
+- **Claiming is one atomic `UPDATE … RETURNING`.** SQLite serializes writes, so there is no
+  need for `SKIP LOCKED` and no need for a lock in Python. A crash mid-job leaves the row
+  `running`, which `requeue_stale_jobs()` picks up after `JOB_STALE_MINUTES`.
+- **`rescore_assessment()` is not `finish_assessment()`.** `finish` closes the sitting and
+  must be a no-op on a second call; `rescore` runs after every verdict so `overall` climbs as
+  answers land. A sitting can be closed and still be grading.
+- **`assessment()` returns a `jobs` key.** A take awaiting transcription has no `answers` row
+  at all, so without it the report page would show a queued question as unanswered. The
+  `working`/`stuck` counts on `history()` are correlated subqueries, not a second `LEFT JOIN`
+  — the `answers` join already fans the row out and would multiply them.
 - **Silence gate before ASR.** Whisper hallucinates fluent text from a dead recording, so
-  `/submit` checks length and RMS and short-circuits to a zero report instead of calling it.
+  `/submit` checks length and RMS and short-circuits to a zero report instead of queueing it.
 - **The take is stored before anything can fail.** `_keep()` transcodes to Opus and writes
   `recordings` *before* the silence gate, so a gate trip, an ASR 502 or a judge 502 all leave
   the audio behind to re-run from. Opus because it is 9× smaller than the WAV the browser
@@ -70,9 +93,9 @@ FastAPI or knows an HTTP request exists. Never the reverse.
   `soundfile` encodes it in-process, so this still needs no ffmpeg. It runs in the threadpool
   — ~1s of CPU per minute of audio would otherwise block the event loop.
 - **Audio expires, transcripts don't.** `RECORDING_RETENTION_DAYS` is the window to
-  challenge a transcription. `prune_recordings()` runs at startup. Scores and transcripts are
-  the product and have no expiry. This reverses the original spec decision — see the
-  amendment note in the design doc before arguing it back.
+  challenge a transcription. `prune_recordings()` runs from the worker's idle branch, at most
+  once an hour. Scores and transcripts are the product and have no expiry. This reverses the
+  original spec decision — see the amendment note in the design doc before arguing it back.
 - **A separate `recordings` table, never a column on `answers`.** A ~200 kB blob on the row
   the history page reads would pull audio into every history query and rewrite the whole
   overflow chain into the WAL on each re-take.
@@ -107,16 +130,20 @@ FastAPI or knows an HTTP request exists. Never the reverse.
 - **An ungraded answer is not a zero.** `finish_assessment()` averages `WHERE score IS NOT
   NULL`: a 502 from the judge is not the candidate's fault. Unanswered questions never reach
   `answers` at all. Only the browser's report screen counts an unrecorded answer as zero.
-- **One row per question per sitting.** `UNIQUE (assessment_id, question_id)` plus an upsert,
-  so a re-recorded answer replaces the take instead of being averaged in twice.
+- **One row per question per sitting.** `UNIQUE (assessment_id, question_id)` plus an upsert
+  on `answers`, `recordings` and `jobs`, so a re-submit replaces the take instead of being
+  averaged in twice. That upsert is a **retry**, not a retake: a sitting is only writable
+  while `finished_at IS NULL`, and once it is finished there is no second attempt at it —
+  start a new sitting, the old one stays as it was.
 
 ## Testing
 
 Non-trivial logic leaves one runnable check behind, and everything runs from one command:
 `uv run python -m tests`. It is wired into CI and into a `pre-push` pre-commit stage.
 
-- Module self-checks — `demo()` in `security.py`, `store.py`, `evaluate.py`. Add to these
-  rather than building a per-function suite.
+- Module self-checks — `demo()` in `security.py`, `store.py`, `evaluate.py`, `worker.py`. Add
+  to these rather than building a per-function suite. `worker.demo()` stubs both remote calls
+  and drives the queue with `step()` rather than a thread, so it needs no clock.
 - `tests/test_api.py` — every route through a `TestClient` against a temp database.
 - `tests/test_frontend.py` — `index.html` has no build step, so a mistyped `$('id')` fails
   silently. This walks every id and every fetched route and checks they exist. Templated urls
@@ -125,8 +152,9 @@ Non-trivial logic leaves one runnable check behind, and everything runs from one
 - `tests/test_packaging.py` — builds the wheel and asserts it ships `questions.json`,
   `schema.sql` and `index.html`, and no local database.
 
-No network in any test: the judge is stubbed and the only `/submit` path exercised is the
-silence gate, which short-circuits before the ASR call.
+No network in any test: the judge is stubbed everywhere, and the two `/submit` paths
+exercised both stop short of a remote call — the silence gate short-circuits, and a loud take
+queues a job that no test lets a worker claim.
 
 ## Don't
 

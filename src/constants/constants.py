@@ -20,6 +20,18 @@ RECORDING_RETENTION_DAYS = 10
 # until the sweep runs. 10 minutes of 16 kHz WAV is ~19 MB.
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
+# --- the grading worker ---------------------------------------------------------
+# One in-process thread polling the jobs table. At a few jobs a minute a queue service
+# would be all cost and no benefit. ponytail: single worker, so a job waits up to one
+# poll interval per stage; add a second thread only when the queue is measurably behind.
+WORKER_POLL_SECONDS = 3
+# ASR and the judge both fail transiently — 502, rate limit, a depleted balance. Three
+# tries, then the job is parked with its error so the report can say what went wrong.
+MAX_JOB_ATTEMPTS = 3
+# A restart mid-job leaves the row 'running' with nobody working it, so anything claimed
+# longer ago than this is assumed dead and re-queued. Must exceed JUDGE_TIMEOUT below.
+JOB_STALE_MINUTES = 5
+
 # The only text-to-speech model with a live provider on the Inference API: 82M
 # params, served by fal-ai. espnet/* and facebook/mms-tts-eng return no provider.
 TTS_MODEL = "hexgrad/Kokoro-82M"

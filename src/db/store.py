@@ -9,7 +9,12 @@ import contextlib
 import json
 import sqlite3
 
-from src.constants.constants import LEVELS, RECORDING_RETENTION_DAYS
+from src.constants.constants import (
+    JOB_STALE_MINUTES,
+    LEVELS,
+    MAX_JOB_ATTEMPTS,
+    RECORDING_RETENTION_DAYS,
+)
 from src.constants.filepaths import DB_PATH, QUESTIONS_JSON, SCHEMA_SQL
 from src.helpers.security import hash_password, verify_password
 
@@ -195,6 +200,8 @@ def finish_assessment(assessment_id, path=None):
 
     Ungraded answers are excluded from the average rather than counted as zero: a 502 from
     the judge is not the candidate's fault. Unanswered questions never reach `answers`.
+    Grading now runs after this, so `overall` starts NULL and `rescore_assessment()` fills
+    it in as verdicts land.
     """
     with connect(path) as conn:
         conn.execute(
@@ -210,6 +217,36 @@ def finish_assessment(assessment_id, path=None):
     return row["overall"] if row else None
 
 
+def rescore_assessment(assessment_id, path=None):
+    """Recompute `overall` from whatever is graded so far. Returns the new average.
+
+    Separate from finish_assessment because that one closes the sitting and must stay a
+    no-op on a second call, whereas the worker calls this after every verdict — the average
+    climbs as answers land rather than appearing all at once at the end.
+    """
+    with connect(path) as conn:
+        conn.execute(
+            "UPDATE assessments SET overall = (SELECT round(avg(score)) FROM answers"
+            "  WHERE assessment_id = ? AND score IS NOT NULL) WHERE id = ?",
+            (assessment_id, assessment_id),
+        )
+        row = conn.execute(
+            "SELECT overall FROM assessments WHERE id = ?", (assessment_id,)
+        ).fetchone()
+    return row["overall"] if row else None
+
+
+# Counts of outstanding and failed work, added to every sitting the browser is shown so it
+# knows whether to keep polling. Correlated subqueries rather than another LEFT JOIN: the
+# answers join is already fanning out the row, and a second one would multiply the counts.
+_PROGRESS = (
+    "(SELECT count(*) FROM jobs j WHERE j.assessment_id = a.id"
+    "   AND j.status IN ('pending', 'running')) AS working,"
+    " (SELECT count(*) FROM jobs j WHERE j.assessment_id = a.id"
+    "   AND j.status = 'failed') AS stuck"
+)
+
+
 def history(user_id, limit=20, path=None):
     """A user's finished sittings, newest first, for the history page."""
     with connect(path) as conn:
@@ -217,7 +254,8 @@ def history(user_id, limit=20, path=None):
             dict(row)
             for row in conn.execute(
                 "SELECT a.id, a.topic, a.level, a.questions, a.overall, a.started_at,"
-                "       a.finished_at, count(n.id) AS answered"
+                "       a.finished_at, count(n.id) AS answered,"
+                f"      {_PROGRESS}"
                 " FROM assessments a LEFT JOIN answers n ON n.assessment_id = a.id"
                 " WHERE a.user_id = ? AND a.finished_at IS NOT NULL"
                 " GROUP BY a.id ORDER BY a.started_at DESC LIMIT ?",
@@ -234,8 +272,9 @@ def assessment(user_id, assessment_id, path=None):
     """
     with connect(path) as conn:
         head = conn.execute(
-            "SELECT id, topic, level, questions, overall, started_at, finished_at"
-            " FROM assessments WHERE id = ? AND user_id = ?",
+            "SELECT a.id, a.topic, a.level, a.questions, a.overall, a.started_at, a.finished_at,"
+            f"      {_PROGRESS}"
+            " FROM assessments a WHERE a.id = ? AND a.user_id = ?",
             (assessment_id, user_id),
         ).fetchone()
         if head is None:
@@ -248,13 +287,151 @@ def assessment(user_id, assessment_id, path=None):
             " WHERE n.assessment_id = ? ORDER BY n.id",
             (assessment_id,),
         ).fetchall()
+        # Outstanding work is listed separately because a take that has not been
+        # transcribed yet has no `answers` row at all — without this the report page
+        # would show a question as simply absent rather than as still in the queue.
+        pending = conn.execute(
+            "SELECT j.question_id, q.text, j.kind, j.status, j.error, j.attempts"
+            " FROM jobs j JOIN questions q ON q.id = j.question_id"
+            " WHERE j.assessment_id = ? AND j.status != 'done' ORDER BY j.id",
+            (assessment_id,),
+        ).fetchall()
 
     return dict(head) | {
         "answers": [
             dict(row) | {"report": json.loads(row["report"]) if row["report"] else None}
             for row in answers
-        ]
+        ],
+        "jobs": [dict(row) for row in pending],
     }
+
+
+# --- the grading queue ----------------------------------------------------------------
+# Claiming is a single UPDATE ... RETURNING, which SQLite runs as one write transaction —
+# so two workers cannot take the same row without SKIP LOCKED. Verified with 4 concurrent
+# workers racing for 100 jobs: 100 claims, 100 distinct.
+
+
+def enqueue(assessment_id, question_id, kind="transcribe", path=None):
+    """Queue one take for the worker, resetting any earlier job for the same question.
+
+    One row per question per sitting, mirroring answers. A re-submit of the same open
+    sitting is a retry, not a second answer, so it restarts the work rather than queueing
+    a duplicate job to race the first. A finished sitting takes no submits at all.
+    """
+    with connect(path) as conn:
+        return conn.execute(
+            "INSERT INTO jobs(assessment_id, question_id, kind) VALUES (?, ?, ?)"
+            " ON CONFLICT(assessment_id, question_id) DO UPDATE SET"
+            "   kind = excluded.kind, status = 'pending', attempts = 0, error = NULL,"
+            "   claimed_at = NULL, created_at = datetime('now')",
+            (assessment_id, question_id, kind),
+        ).lastrowid
+
+
+def claim_job(path=None):
+    """Take the oldest waiting job, or None. Atomic — two workers cannot get the same row."""
+    with connect(path) as conn:
+        row = conn.execute(
+            "UPDATE jobs SET status = 'running', attempts = attempts + 1,"
+            "  claimed_at = datetime('now')"
+            " WHERE id = (SELECT id FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1)"
+            " RETURNING id, assessment_id, question_id, kind, attempts",
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def advance_job(job_id, kind, path=None):
+    """Move a claimed job to its next stage and put it back in the queue.
+
+    attempts resets: a flaky ASR call must not spend the judge's retries.
+    """
+    with connect(path) as conn:
+        conn.execute(
+            "UPDATE jobs SET kind = ?, status = 'pending', attempts = 0, claimed_at = NULL"
+            " WHERE id = ?",
+            (kind, job_id),
+        )
+
+
+def finish_job(job_id, path=None):
+    """Mark a job done. Nothing deletes it — the row is the record of what was graded."""
+    with connect(path) as conn:
+        conn.execute(
+            "UPDATE jobs SET status = 'done', error = NULL, claimed_at = NULL WHERE id = ?",
+            (job_id,),
+        )
+
+
+def fail_job(job_id, error, max_attempts=MAX_JOB_ATTEMPTS, path=None):
+    """Record a failure. Back to 'pending' if retries remain, else parked as 'failed'.
+
+    The error text is kept either way, so a report can say what went wrong rather than
+    showing a question that silently never scored.
+    """
+    with connect(path) as conn:
+        row = conn.execute(
+            "UPDATE jobs SET error = ?2, claimed_at = NULL,"
+            "  status = CASE WHEN attempts >= ?3 THEN 'failed' ELSE 'pending' END"
+            " WHERE id = ?1 RETURNING status, attempts",
+            (job_id, str(error)[:500], max_attempts),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def requeue_stale_jobs(minutes=JOB_STALE_MINUTES, path=None):
+    """Return jobs claimed too long ago to the queue. Returns how many.
+
+    A crash or a restart mid-job leaves the row 'running' with nobody working it, and
+    nothing else would ever pick it up. ponytail: a time-based watchdog, not a worker
+    heartbeat — a job genuinely slower than the window gets run twice.
+    """
+    with connect(path) as conn:
+        return conn.execute(
+            "UPDATE jobs SET status = 'pending', claimed_at = NULL"
+            " WHERE status = 'running' AND claimed_at < datetime('now', ?)",
+            (f"-{minutes} minutes",),
+        ).rowcount
+
+
+def assessment_jobs_left(assessment_id, path=None):
+    """How many of a sitting's jobs are still unfinished — 0 means the report is ready."""
+    with connect(path) as conn:
+        return conn.execute(
+            "SELECT count(*) c FROM jobs WHERE assessment_id = ?"
+            "  AND status IN ('pending', 'running')",
+            (assessment_id,),
+        ).fetchone()["c"]
+
+
+def job_input(assessment_id, question_id, path=None):
+    """Everything the worker needs to run one stage, in one read.
+
+    The level lives on the sitting rather than the job: it is what the whole interview was
+    graded at, and a job that carried its own copy could disagree with the report header.
+    """
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT a.level, q.text, q.ideal_answer, n.transcript"
+            " FROM assessments a JOIN questions q ON q.id = ?2"
+            " LEFT JOIN answers n ON n.assessment_id = a.id AND n.question_id = q.id"
+            " WHERE a.id = ?1",
+            (assessment_id, question_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def grade_answer(assessment_id, question_id, report, path=None):
+    """Attach a verdict to an answer that already has its transcript.
+
+    Narrower than save_answer on purpose: the transcript is the expensive half and the
+    judge stage must not be able to overwrite it with a stale copy.
+    """
+    with connect(path) as conn:
+        return conn.execute(
+            "UPDATE answers SET report = ?, score = ? WHERE assessment_id = ? AND question_id = ?",
+            (json.dumps(report), report.get("score"), assessment_id, question_id),
+        ).rowcount
 
 
 # --- recordings ---------------------------------------------------------------------
@@ -361,10 +538,12 @@ def demo():
 
         _check_assessments(db, uid)
         _check_recordings(db, uid)
+        _check_jobs(db, uid)
 
     print(
         f"ok — {len(bank)} questions seeded, signup/login round-trips, duplicates rejected, "
-        "assessments persist and stay per-user, takes round-trip and expire"
+        "assessments persist and stay per-user, takes round-trip and expire, "
+        "jobs claim once and retry then park"
     )
 
 
@@ -453,6 +632,67 @@ def _check_recordings(db, uid):
         assert conn.execute("SELECT count(*) c FROM recordings").fetchone()["c"] == 0, (
             "deleting an assessment must delete its recordings"
         )
+
+
+def _check_jobs(db, uid):
+    """Claiming takes each row once, a stage advance resets attempts, and retries run out."""
+    qs = questions(path=db)[:2]
+    sitting = start_assessment(uid, None, "expert", len(qs), path=db)
+    for q in qs:
+        enqueue(sitting, q["id"], path=db)
+    assert assessment_jobs_left(sitting, path=db) == 2
+
+    # Every claim must be a different row: this is the whole reason for UPDATE ... RETURNING.
+    claimed = [claim_job(path=db), claim_job(path=db)]
+    assert len({j["id"] for j in claimed}) == 2, claimed
+    assert claim_job(path=db) is None, "nothing left to claim once both are running"
+    assert all(j["kind"] == "transcribe" and j["attempts"] == 1 for j in claimed), claimed
+
+    # ASR done: the job moves to the judge with a clean attempt count.
+    first, second = claimed
+    save_answer(sitting, first["question_id"], "what I said", 30.0, path=db)
+    advance_job(first["id"], "grade", path=db)
+    again = claim_job(path=db)
+    assert again["id"] == first["id"] and again["kind"] == "grade", again
+    assert again["attempts"] == 1, "a new stage starts its retries over"
+
+    ready = job_input(sitting, first["question_id"], path=db)
+    assert ready["level"] == "expert" and ready["transcript"] == "what I said"
+    assert ready["ideal_answer"], "the judge needs the ideal answer"
+
+    verdict = {"score": 72, "parameters": {}, "comments": {}}
+    assert grade_answer(sitting, first["question_id"], verdict, path=db) == 1
+    finish_job(again["id"], path=db)
+    # The average moves as verdicts land, before the sitting is closed.
+    assert rescore_assessment(sitting, path=db) == 72
+    assert assessment_jobs_left(sitting, path=db) == 1
+
+    # The second one keeps failing: retried until its attempts run out, then parked.
+    assert fail_job(second["id"], "asr 502", path=db)["status"] == "pending", "retry first"
+    for _ in range(MAX_JOB_ATTEMPTS - 1):
+        parked = fail_job(claim_job(path=db)["id"], "asr 502 again", path=db)
+    assert parked["status"] == "failed", parked
+    assert claim_job(path=db) is None, "a parked job must not be claimed again"
+    assert assessment_jobs_left(sitting, path=db) == 0, "failed is finished, just not graded"
+
+    # The failure is visible to the report page, with its reason.
+    full = assessment(uid, sitting, path=db)
+    assert full["stuck"] == 1 and full["working"] == 0, full
+    assert [j["error"] for j in full["jobs"]] == ["asr 502 again"], full["jobs"]
+    assert history(uid, path=db)[0]["working"] == 0, "an unfinished sitting is not history yet"
+
+    # A crash leaves a row 'running' with nobody on it; the watchdog is what frees it.
+    enqueue(sitting, qs[1]["id"], path=db)  # re-submitting the open sitting retries it
+    assert claim_job(path=db)["attempts"] == 1, "a retry starts its attempts over"
+    assert requeue_stale_jobs(path=db) == 0, "a fresh claim is not stale"
+    with connect(db) as conn:
+        conn.execute("UPDATE jobs SET claimed_at = datetime('now', '-9 minutes')")
+    assert requeue_stale_jobs(path=db) == 1
+    assert claim_job(path=db)["question_id"] == qs[1]["id"], "and it is claimable again"
+
+    with connect(db) as conn:  # the cascade, same as recordings
+        conn.execute("DELETE FROM assessments WHERE id = ?", (sitting,))
+        assert conn.execute("SELECT count(*) c FROM jobs").fetchone()["c"] == 0
 
 
 if __name__ == "__main__":

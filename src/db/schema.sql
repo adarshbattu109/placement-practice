@@ -87,3 +87,27 @@ CREATE TABLE IF NOT EXISTS recordings (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS recordings_by_age ON recordings(created_at);
+
+-- One row per take, not one per stage: `kind` advances from 'transcribe' to 'grade' as the
+-- worker gets through it. Keeping it to one row means UNIQUE (assessment_id, question_id)
+-- can mirror answers and recordings, so a re-submit of an open sitting resets the work
+-- instead of racing an older job for the same question. attempts resets at each stage — a
+-- flaky ASR call must
+-- not spend the judge's retries.
+-- status: pending -> running -> done, or failed once attempts run out.
+CREATE TABLE IF NOT EXISTS jobs (
+  id            INTEGER PRIMARY KEY,
+  assessment_id INTEGER NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
+  question_id   TEXT NOT NULL REFERENCES questions(id),
+  kind          TEXT NOT NULL DEFAULT 'transcribe',
+  status        TEXT NOT NULL DEFAULT 'pending',
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  error         TEXT,                         -- the last failure, kept so a report can say why
+  claimed_at    TEXT,                         -- when a worker took it; NULL when it is waiting
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (assessment_id, question_id)
+) STRICT;
+
+-- The claim query orders by id within status, and the status page groups by assessment.
+CREATE INDEX IF NOT EXISTS jobs_waiting ON jobs(status, id);
+CREATE INDEX IF NOT EXISTS jobs_by_assessment ON jobs(assessment_id);

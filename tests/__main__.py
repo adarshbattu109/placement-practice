@@ -10,6 +10,7 @@ import time
 import traceback
 
 import app.evaluate
+import app.worker
 import src.db.store
 import src.helpers.security
 from tests import test_api, test_frontend, test_packaging
@@ -20,6 +21,9 @@ CHECKS = (
     ("security", src.helpers.security.demo),
     ("store", src.db.store.demo),
     ("evaluate", app.evaluate.demo),
+    # Before the route checks: both rebind store.DB_PATH, and the worker's runs on a temp
+    # database that is gone by the time test_api points it at its own.
+    ("worker", app.worker.demo),
     ("api", test_api.check),
     ("frontend", test_frontend.check),
     ("packaging", test_packaging.check),

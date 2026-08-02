@@ -257,6 +257,35 @@
   .bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin: 1.5rem 0 .8rem; }
   .bar span { display: block; height: 100%; width: 0; background: var(--amber); border-radius: 3px; transition: width .4s ease-out; }
 
+  /* ── Past interviews: a tape log, one row per take ───────────────── */
+  /* The row reads left to right the way a studio log does: when it was cut, what was on
+     it, how far through the desk it is, what it scored. */
+  .past {
+    background: var(--panel); border: 1px solid var(--seam); border-radius: 12px;
+    padding: .95rem 1.1rem; display: grid; gap: .3rem 1.1rem; align-items: center;
+    grid-template-columns: 1fr auto auto;
+  }
+  .past .when { grid-column: 1; font: 500 .68rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--paper-dim); }
+  .past .what { grid-column: 1; font-size: .95rem; }
+  .past .sc { grid-column: 2; font: 600 1.35rem/1 var(--mono); font-variant-numeric: tabular-nums; }
+  .past .go, .past .key { grid-column: 3; }
+  /* The queue on the level ladder rather than a spinner: the ladder is this page's
+     instrument, and one segment per answer says how far along it actually is. */
+  .queue { grid-column: 1 / -1; display: flex; gap: 3px; height: .5rem; align-items: stretch; margin-top: .35rem; }
+  .queue i { flex: 1; border-radius: 2px; background: var(--seam); min-width: 3px; }
+  .queue i[data-s="graded"] { background: var(--pass); }
+  .queue i[data-s="failed"] { background: var(--live); }
+  /* Only the segment currently being worked breathes, so a polling page reads as live
+     without the whole row flickering. */
+  .queue i[data-s="working"] { background: var(--amber); animation: cueing 1.4s ease-in-out infinite; }
+  @keyframes cueing { 50% { opacity: .2; } }
+  .past .legend { grid-column: 1 / -1; font: 400 .68rem/1.4 var(--mono); letter-spacing: .06em; color: var(--paper-dim); }
+  .past .legend[data-s="partial"] { color: var(--live); }
+  @media (max-width: 30rem) {
+    .past { grid-template-columns: 1fr auto; }
+    .past .go, .past .key { grid-column: 1 / -1; justify-self: start; }
+  }
+
   /* ── Report ─────────────────────────────────────────────────────── */
   .report { display: grid; gap: 1.75rem; }
   .sheet-head { display: none; }         /* print-only header */
@@ -427,8 +456,8 @@
   <section class="view" id="view-history" hidden>
     <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Past interviews</span></div>
     <h1 class="big">Where you've been.</h1>
-    <p class="lede">Every finished interview, newest first. Open one to read the answers you gave.</p>
-    <div id="history-list"></div>
+    <p class="lede" id="history-lede">Every interview you've submitted, newest first. Grading runs in the background — open one once it's ready.</p>
+    <div id="history-list" aria-live="polite"></div>
   </section>
 
   <!-- 3. Topic + expertise ─────────────────────────────────────────── -->
@@ -500,8 +529,8 @@
     </div>
 
     <div id="grading" class="grading" hidden aria-live="polite">
-      <h1 class="big">Grading your interview.</h1>
-      <p class="lede">Each answer is transcribed, then graded against the ideal answer at your level. Keep this tab open.</p>
+      <h1 class="big">Sending your answers.</h1>
+      <p class="lede">Each recording is uploaded, then queued for transcription and grading. Once they're all in you can close the tab — the results wait for you.</p>
       <div class="bar"><span id="bar-fill"></span></div>
       <p class="count" id="grading-status">Starting…</p>
     </div>
@@ -510,6 +539,7 @@
   <!-- 5. Report ────────────────────────────────────────────────────── -->
   <section class="view" id="view-report" hidden>
     <div class="crumb no-print">
+      <button id="to-past">← Past interviews</button>
       <button id="again">↻ Practise again</button>
     </div>
     <div class="sheet-head">
@@ -631,6 +661,8 @@ wireAuth('signup', '/signup');
 
 $('sign-out').onclick = async () => {
   await fetch('/logout', { method: 'POST' });
+  stopPolling();                                // no fetching another account's history
+  $('history-list').innerHTML = '';
   bank = null;                                  // the next account fetches its own bank
   state.candidate = '';
   setPhase('standby');
@@ -692,68 +724,128 @@ function syncDial() {
 
 document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => show(b.dataset.go));
 
-// ── 2b. History ───────────────────────────────────────────────────────
-// Sittings load on open, never cached: finishing an interview adds one.
-$('to-history').onclick = async () => {
+// ── 2b. Past interviews ───────────────────────────────────────────────
+// Grading now finishes after the request that submitted it, so this page is where a
+// candidate watches for their results. It polls only while something is outstanding.
+let poll = null;
+
+$('to-history').onclick = () => openHistory();
+$('to-past').onclick = () => openHistory();
+
+async function openHistory() {
   show('history');
-  $('history-list').innerHTML = '<p class="none">Loading…</p>';
+  if (!$('history-list').children.length) $('history-list').innerHTML = '<p class="none">Loading…</p>';
+  await refreshHistory();
+}
+
+async function refreshHistory() {
   let past;
   try {
     past = await get('/history');
   } catch (e) {
-    $('history-list').innerHTML = `<p class="none">Could not load your history: ${escape(e.message)}</p>`;
+    stopPolling();
+    $('history-list').innerHTML = `<p class="none">Could not load your interviews: ${escape(e.message)}</p>`;
     return;
   }
   if (!past.length) {
+    stopPolling();
     $('history-list').innerHTML = '<p class="none">Nothing yet. Finish an interview and it shows up here.</p>';
     return;
   }
   $('history-list').innerHTML = `<div class="items">${past.map(pastRow).join('')}</div>`;
-  // The answers are a second request each, so fetch one only when it is opened.
-  $('history-list').querySelectorAll('details').forEach(d => d.ontoggle = () => {
-    if (d.open && !d.dataset.loaded) fillPast(d);
-  });
-};
+  $('history-list').querySelectorAll('[data-open]').forEach(b => b.onclick = () => openReport(b.dataset.open));
+
+  // Keep polling only while the worker still owes something, so an idle page is idle.
+  const working = past.reduce((n, s) => n + s.working, 0);
+  $('history-lede').textContent = working
+    ? `${working} answer${working === 1 ? '' : 's'} still being graded. This page updates itself — you can also close the tab and come back.`
+    : "Every interview you've submitted, newest first.";
+  working ? startPolling() : stopPolling();
+}
+
+function startPolling() {
+  poll ??= setInterval(() => {
+    // Polling a hidden view would keep fetching behind the candidate's back.
+    if ($('view-history').hidden) return stopPolling();
+    refreshHistory();
+  }, 4000);
+}
+
+function stopPolling() {
+  clearInterval(poll);
+  poll = null;
+}
 
 function pastRow(sitting) {
   const when = new Date(`${sitting.finished_at.replace(' ', 'T')}Z`).toLocaleString();
+  const total = sitting.questions ?? sitting.answered;
   const score = sitting.overall ?? '—';
-  return `<details class="item" data-id="${sitting.id}">
-    <summary><span class="idx">${escape(when)}</span>
-      <span class="qt">${escape(sitting.topic || 'Every topic')} · ${escape(sitting.level)} ·
-        ${sitting.answered} of ${sitting.questions ?? sitting.answered} answered</span>
-      <span class="sc" style="color:${sitting.overall === null ? 'var(--paper-dim)' : tone(score)}">${score}</span></summary>
-    <div class="body"><p class="none">Loading…</p></div>
-  </details>`;
+  const done = total - sitting.working - sitting.stuck;
+
+  // One segment per question, in the order the desk works through them: what is graded,
+  // what is on the desk now, what is still waiting, what came back broken.
+  const segment = i => i < done ? 'graded'
+    : i < done + sitting.working ? (i === done ? 'working' : 'waiting')
+    : 'failed';
+  const ladder = Array.from({ length: total }, (_, i) => `<i data-s="${segment(i)}"></i>`).join('');
+
+  const legend = sitting.working
+    ? { s: 'working', text: `${done} of ${total} graded · ${sitting.working} on the desk` }
+    : sitting.stuck
+      ? { s: 'partial', text: `${done} of ${total} graded · ${sitting.stuck} couldn't be graded` }
+      : { s: 'done', text: `${total} of ${total} graded` };
+
+  return `<div class="past" data-id="${sitting.id}">
+    <span class="when">${escape(when)}</span>
+    <span class="what">${escape(sitting.topic || 'Every topic')} · ${escape(sitting.level)}</span>
+    <span class="sc" style="color:${sitting.overall === null ? 'var(--paper-dim)' : tone(score)}">${score}</span>
+    <button class="key${sitting.working ? '' : ' go'}" data-open="${sitting.id}">
+      ${sitting.working ? 'View progress' : 'View report'}</button>
+    <span class="queue" aria-hidden="true">${ladder}</span>
+    <span class="legend" data-s="${legend.s}">${escape(legend.text)}</span>
+  </div>`;
 }
 
-async function fillPast(row) {
-  row.dataset.loaded = '1';
-  const body = row.querySelector('.body');
+// ── 2c. A stored report ───────────────────────────────────────────────
+// Reads the same report screen the interview used, from the database rather than from the
+// responses of a run that just happened — so it survives a reload, and a closed tab.
+async function openReport(id) {
+  stopPolling();
+  show('report');
+  $('report').innerHTML = '<p class="none">Loading…</p>';
   let sitting;
   try {
-    sitting = await get(`/assessments/${row.dataset.id}`);
+    sitting = await get(`/assessments/${id}`);
   } catch (e) {
-    delete row.dataset.loaded;            // let a retry re-fetch on the next open
-    body.innerHTML = `<p class="none">Could not load this interview: ${escape(e.message)}</p>`;
+    $('report').innerHTML = `<p class="none">Could not load that interview: ${escape(e.message)}</p>`;
     return;
   }
-  body.innerHTML = sitting.answers.length
-    ? sitting.answers.map(pastAnswer).join('')
-    : '<p class="none">No answers were recorded in this one.</p>';
+  state.topic = sitting.topic || '';
+  state.level = sitting.level;
+  renderReport(storedResults(sitting), sitting);
 }
 
-function pastAnswer(a) {
-  const said = words(a.transcript)
-    ? `<p class="transcript">${escape(a.transcript)}</p>`
-    : '<p class="none">Nothing was transcribed — the recording was silent.</p>';
-  return `<div class="tx">
-    <h2>${escape(a.text)}
-      <span class="wc" style="color:${a.score === null ? 'var(--paper-dim)' : tone(a.score)}">
-        ${a.score ?? 'not graded'}</span></h2>
-    ${said}
-    ${a.report?.comments?.suggestion ? `<p class="say">${escape(a.report.comments.suggestion)}</p>` : ''}
-  </div>`;
+// The report screen was written against the shape /submit used to return. Rather than
+// teach it a second shape, map the stored rows onto that one.
+function storedResults(sitting) {
+  const failed = new Map(sitting.jobs.map(j => [j.question_id, j]));
+  const results = sitting.answers.map(a => {
+    const job = failed.get(a.question_id);
+    const question = { id: a.question_id, text: a.text, topic: a.topic };
+    if (a.report) return { question, report: { ...a.report, transcript: a.transcript } };
+    return { question, pending: job?.status !== 'failed', failed: job?.error ?? 'not graded' };
+  });
+  // A take still awaiting transcription has no answer row at all, so it only exists here.
+  const seen = new Set(sitting.answers.map(a => a.question_id));
+  for (const job of sitting.jobs) {
+    if (seen.has(job.question_id)) continue;
+    results.push({
+      question: { id: job.question_id, text: job.text },
+      pending: job.status !== 'failed',
+      failed: job.error ?? 'waiting to be transcribed',
+    });
+  }
+  return results;
 }
 
 // ── 3. Setup → interview ──────────────────────────────────────────────
@@ -966,71 +1058,77 @@ $('confirm-go').onclick = async () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 
   const total = state.questions.length;
-  const results = [];
-  let graded = 0;
+  const takes = state.takes.map((take, i) => ({ take, q: state.questions[i] })).filter(t => t.take);
+  const failures = [];
+  let sent = 0;
 
-  for (let i = 0; i < total; i++) {
-    const q = state.questions[i];
-    $('grading-status').textContent = `Question ${i + 1} of ${total} — ${q.topic}`;
-    const take = state.takes[i];
-    if (!take) {
-      results.push({ question: q, unanswered: true });
-    } else {
-      const body = new FormData();
-      body.append('question_id', q.id);
-      body.append('level', state.level);
-      body.append('audio', take.wav, 'answer.wav');
-      if (state.assessment) body.append('assessment_id', state.assessment);
-      try {
-        const res = await fetch('/submit', { method: 'POST', body });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `${res.status} ${res.statusText}`);
-        results.push({ question: q, report: await res.json() });
-        graded++;
-      } catch (e) {
-        // One bad answer must not lose the rest of the interview.
-        results.push({ question: q, failed: e.message });
-      }
+  for (const [i, { take, q }] of takes.entries()) {
+    $('grading-status').textContent = `Uploading ${i + 1} of ${takes.length} — ${q.topic}`;
+    const body = new FormData();
+    body.append('question_id', q.id);
+    body.append('level', state.level);
+    body.append('audio', take.wav, 'answer.wav');
+    body.append('assessment_id', state.assessment);
+    try {
+      await post('/submit', body);
+      sent++;
+    } catch (e) {
+      failures.push(e.message);   // one bad upload must not lose the rest of the interview
     }
-    $('bar-fill').style.width = `${((i + 1) / total) * 100}%`;
+    $('bar-fill').style.width = `${((i + 1) / takes.length) * 100}%`;
   }
 
   $('grading').hidden = true;
-  if (!graded) {
+  if (!sent) {
+    // Nothing reached the server, so the sitting stays open and a retry files against it.
     $('during').hidden = false;
     setPhase('live');
-    setStatus(`Grading failed for every answer: ${results.find(r => r.failed)?.failed ?? 'unknown error'}. Your recordings are still here — try submitting again.`, 'bad');
+    setStatus(`Could not send your answers: ${failures[0] ?? 'unknown error'}. Your recordings are still here — try submitting again.`, 'bad');
     updateFinish();
-    return;   // the sitting stays open, so a retry files against the same one
+    return;
   }
 
-  // Close the sitting so it lands in history with an average. The report is already in
-  // hand, so a failure here costs the history row, not the report — don't block on it.
-  if (state.assessment) {
-    try {
-      await post(`/assessments/${state.assessment}/finish`, new FormData());
-    } catch (e) {
-      console.warn('could not close the assessment:', e.message);
-    }
-    state.assessment = null;
+  // Closing the sitting is what makes it appear as submitted, so it cannot be skipped.
+  try {
+    await post(`/assessments/${state.assessment}/finish`, new FormData());
+  } catch (e) {
+    $('during').hidden = false;
+    setPhase('live');
+    setStatus(`Your answers were sent but the interview didn't close: ${e.message}. Submit again.`, 'bad');
+    updateFinish();
+    return;
   }
-  renderReport(results);
-  show('report');
+
+  state.assessment = null;
+  state.takes.forEach(t => t && URL.revokeObjectURL(t.url));
+  state.takes = [];
+  const missed = total - takes.length;
+  $('history-lede').textContent = 'Submitted. Grading runs in the background — this page updates itself.';
+  await openHistory();
+  if (failures.length || missed) {
+    $('history-lede').textContent = [
+      `${sent} of ${total} answer${total === 1 ? '' : 's'} submitted.`,
+      failures.length ? `${failures.length} could not be sent: ${failures[0]}` : '',
+      missed ? `${missed} was never recorded and scores zero.` : '',
+      'Grading runs in the background.',
+    ].filter(Boolean).join(' ');
+  }
 };
 
 // ── 5. Report ─────────────────────────────────────────────────────────
 const tone = v => v >= 70 ? 'var(--pass)' : v >= 40 ? 'var(--amber)' : 'var(--live)';
 
-function renderReport(results) {
-  // Unanswered counts as zero; a server failure is excluded so a 502 can't
-  // masquerade as a bad answer.
-  const scored = results.filter(r => !r.failed);
-  const overall = Math.round(scored.reduce((s, r) => s + (r.report?.score ?? 0), 0) / scored.length);
+function renderReport(results, sitting) {
+  // Only graded answers count. An ungraded one is either still queued or failed
+  // upstream — neither is the candidate's answer being bad, so neither is a zero.
   const graded = results.filter(r => r.report);
-  const failed = results.filter(r => r.failed);
-  const weights = graded[0].report.weights;
+  const pending = results.filter(r => r.pending);
+  const failed = results.filter(r => r.failed && !r.pending);
+  const overall = sitting.overall ?? 0;
+  const weights = graded[0]?.report.weights ?? {};
 
   const avg = name => Math.round(
-    scored.reduce((s, r) => s + (r.report?.parameters[name].score ?? 0), 0) / scored.length);
+    graded.reduce((s, r) => s + r.report.parameters[name].score, 0) / graded.length);
 
   const read = overall >= 80 ? 'Interview ready' : overall >= 60 ? 'Nearly there'
     : overall >= 35 ? 'Needs another pass' : 'Start this topic over';
@@ -1063,8 +1161,8 @@ function renderReport(results) {
         <span class="qt">${escape(r.question.text)}</span>
         <span class="sc" style="color:${colour}">${score}</span></summary>`;
 
-    if (r.unanswered) return `<details class="item">${head('0', 'var(--paper-dim)')}
-      <div class="body"><p class="full">You didn't record an answer to this one, so it scores zero.</p></div></details>`;
+    if (r.pending) return `<details class="item">${head('…', 'var(--amber)')}
+      <div class="body"><p class="full">Still being graded. It joins the average as soon as it lands — reopen this report in a moment.</p></div></details>`;
     if (r.failed) return `<details class="item">${head('—', 'var(--live)')}
       <div class="body"><p class="full">This answer couldn't be graded: ${escape(r.failed)}. It's left out of the overall score.</p></div></details>`;
 
@@ -1089,10 +1187,23 @@ function renderReport(results) {
   const allGaps = [...new Set(graded.flatMap(r => r.report.comments.gaps))].slice(0, 6);
   const allWins = [...new Set(graded.flatMap(r => r.report.comments.strengths))].slice(0, 6);
   const allErrors = graded.flatMap(r => r.report.errors);
-  const stamp = new Date().toLocaleString();
+  const stamp = new Date(`${sitting.finished_at.replace(' ', 'T')}Z`).toLocaleString();
 
   $('sheet-meta').textContent =
     `${state.candidate} · ${state.topic || 'Every topic'} · ${title(state.level)} · ${stamp}`;
+
+  // Nothing graded yet: the summary would be a page of zeroes and NaNs, so say so instead.
+  if (!graded.length) {
+    $('report').innerHTML = `
+      <h1 class="big">${escape(state.candidate)}, this one isn't graded yet.</h1>
+      <p class="lede">${escape(state.topic || 'Every topic')} · ${escape(state.level)} level · ${escape(stamp)}</p>
+      <p class="none">${pending.length
+        ? `${pending.length} answer${pending.length === 1 ? ' is' : 's are'} still in the queue. Come back in a moment.`
+        : `None of your answers could be graded: ${escape(failed[0]?.failed ?? 'unknown error')}`}</p>
+      <div><h2>Question by question</h2>
+        <div class="items">${results.map(item).join('')}</div></div>`;
+    return;
+  }
 
   $('report').innerHTML = `
     <h1 class="big">${escape(state.candidate)}, here's how that went.</h1>
@@ -1102,7 +1213,7 @@ function renderReport(results) {
     <div class="verdict">
       <span class="num" style="color:${tone(overall)}">${overall}</span><span class="of">/ 100</span>
       <span class="read" style="color:${tone(overall)}">${read}<br>
-        <span class="count">average across ${scored.length} question${scored.length === 1 ? '' : 's'}</span></span>
+        <span class="count">average across ${graded.length} question${graded.length === 1 ? '' : 's'}</span></span>
     </div>
 
     <div><h2>Across the whole interview</h2>
@@ -1115,6 +1226,9 @@ function renderReport(results) {
 
     ${allErrors.length ? `<div><h2>Incorrect claims across all answers</h2>
       <ul class="wrong">${allErrors.map(e => `<li>${escape(e)}</li>`).join('')}</ul></div>` : ''}
+
+    ${pending.length ? `<p class="none">${pending.length} answer${pending.length === 1 ? ' is' : 's are'}
+      still being graded, so this average will move.</p>` : ''}
 
     ${failed.length ? `<p class="none">${failed.length} answer${failed.length === 1 ? '' : 's'}
       couldn't be graded and ${failed.length === 1 ? 'is' : 'are'} excluded from the average.</p>` : ''}
