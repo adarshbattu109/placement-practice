@@ -248,17 +248,28 @@ _PROGRESS = (
 
 
 def history(user_id, limit=20, path=None):
-    """A user's finished sittings, newest first, for the history page."""
+    """Every sitting this user has opened, newest first — in progress and finished alike.
+
+    An unfinished sitting is listed rather than hidden. The dashboard is the only route to
+    one, so filtering them out made an interview abandoned halfway look like it had never
+    happened. `finished_at IS NULL` is what marks one as still open.
+
+    `graded` counts scored answers directly. The browser used to derive progress by
+    subtracting the queue from the question count, which counted a question that was never
+    recorded — no answer row and no job — as graded.
+    """
     with connect(path) as conn:
         return [
             dict(row)
             for row in conn.execute(
                 "SELECT a.id, a.topic, a.level, a.questions, a.overall, a.started_at,"
-                "       a.finished_at, count(n.id) AS answered,"
+                "       a.finished_at, count(n.id) AS answered, count(n.score) AS graded,"
                 f"      {_PROGRESS}"
                 " FROM assessments a LEFT JOIN answers n ON n.assessment_id = a.id"
-                " WHERE a.user_id = ? AND a.finished_at IS NOT NULL"
-                " GROUP BY a.id ORDER BY a.started_at DESC LIMIT ?",
+                " WHERE a.user_id = ?"
+                # id breaks the tie: started_at is second-resolution, so two sittings opened
+                # in the same second would otherwise come back in an arbitrary order.
+                " GROUP BY a.id ORDER BY a.started_at DESC, a.id DESC LIMIT ?",
                 (user_id, limit),
             )
         ]
@@ -572,6 +583,7 @@ def _check_assessments(db, uid):
     past = history(uid, path=db)
     assert len(past) == 1 and past[0]["overall"] == 75 and past[0]["answered"] == 3, past
     assert past[0]["topic"] == "DSA" and past[0]["questions"] == 3
+    assert past[0]["graded"] == 2, "the ungraded answer is answered but not graded"
 
     full = assessment(uid, sitting, path=db)
     assert len(full["answers"]) == 3
@@ -581,10 +593,15 @@ def _check_assessments(db, uid):
     assert next(a for a in full["answers"] if a["score"] is None)["report"] is None
     assert full["answers"][0]["text"], "the question text comes back for the report page"
 
-    # An open sitting is not history yet, and another user cannot read either one.
+    # An open sitting is listed too, newest first, and reads as open rather than as a zero.
     open_sitting = start_assessment(uid, None, "beginner", 5, path=db)
-    assert len(history(uid, path=db)) == 1, "an unfinished sitting must not appear in history"
+    listed = history(uid, path=db)
+    assert [s["id"] for s in listed] == [open_sitting, sitting], listed
+    assert listed[0]["finished_at"] is None and listed[0]["overall"] is None, listed[0]
+    assert listed[0]["answered"] == 0 and listed[0]["graded"] == 0, listed[0]
     assert assessment(uid, open_sitting, path=db)["topic"] is None  # every topic
+
+    # Another user cannot read either one.
 
     other = create_user("bob@example.com", "Bob", "x" * 12, path=db)
     assert assessment(other, sitting, path=db) is None, "one user must not read another's answers"
@@ -679,7 +696,8 @@ def _check_jobs(db, uid):
     full = assessment(uid, sitting, path=db)
     assert full["stuck"] == 1 and full["working"] == 0, full
     assert [j["error"] for j in full["jobs"]] == ["asr 502 again"], full["jobs"]
-    assert history(uid, path=db)[0]["working"] == 0, "an unfinished sitting is not history yet"
+    listed = next(s for s in history(uid, path=db) if s["id"] == sitting)
+    assert listed["working"] == 0 and listed["stuck"] == 1, listed
 
     # A crash leaves a row 'running' with nobody on it; the watchdog is what frees it.
     enqueue(sitting, qs[1]["id"], path=db)  # re-submitting the open sitting retries it

@@ -80,6 +80,18 @@ anyone mint a session. See `.env.example`. The tests need neither a token nor th
 - **`rescore_assessment()` is not `finish_assessment()`.** `finish` closes the sitting and
   must be a no-op on a second call; `rescore` runs after every verdict so `overall` climbs as
   answers land. A sitting can be closed and still be grading.
+- **`history()` lists open sittings too.** It used to filter `finished_at IS NOT NULL`, which
+  made an interview abandoned halfway look like it had never happened — and the dashboard is
+  the only route back to one. `finished_at IS NULL` is what marks a row open. Listed is not
+  resumable: the questions and the recordings only ever lived in the tab that started it.
+- **`history()` returns `graded`, and the browser must not derive it.** `count(n.score)`,
+  because the old `total - working - stuck` arithmetic counted a question that was never
+  recorded — no `answers` row, no `jobs` row — as graded. `ORDER BY started_at DESC, id DESC`:
+  `started_at` is second-resolution, so two sittings opened in the same second need the tiebreak.
+- **Three nav levels, three different shapes.** Home is full-width hairline rows (`.bay`), the
+  formats are cards (`.mode`), the interview is the level ladder. Reusing the cards for home
+  would have made two consecutive nav levels look identical. Each home row carries a live
+  readout drawn from `/history` and `/questions`, so it says what is waiting before a click.
 - **`assessment()` returns a `jobs` key.** A take awaiting transcription has no `answers` row
   at all, so without it the report page would show a queued question as unanswered. The
   `working`/`stuck` counts on `history()` are correlated subqueries, not a second `LEFT JOIN`

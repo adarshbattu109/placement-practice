@@ -39,8 +39,13 @@
     display: flex; align-items: center; gap: .9rem; flex-wrap: wrap;
     padding-bottom: 1rem; border-bottom: 1px solid var(--seam); margin-bottom: clamp(1.75rem, 4vw, 2.75rem);
   }
-  .mark { font-family: var(--display); font-weight: 800; font-size: 1.05rem; letter-spacing: -.02em; }
+  .mark {
+    font-family: var(--display); font-weight: 800; font-size: 1.05rem; letter-spacing: -.02em;
+    background: none; border: 0; padding: 0; color: var(--paper); cursor: pointer;
+  }
   .mark em { font-style: normal; color: var(--amber); }
+  .mark:disabled { cursor: default; }         /* on the login screen there is nowhere to go */
+  .mark:hover:not(:disabled) em { color: var(--paper); }
   .mono-label { font: 500 .7rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--paper-dim); }
   .who { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
   .who .name { font-family: var(--display); font-weight: 600; font-size: .95rem; }
@@ -65,6 +70,9 @@
     font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
   }
   .crumb button:hover { color: var(--amber); }
+  /* Without a divider the trail read as one phrase: "← Home Past assessments". Only before the
+     label — the report crumb's second child is another action, not the next level down. */
+  .crumb .mono-label::before { content: '/'; margin-right: .6rem; color: var(--seam); }
 
   h1.big {
     font-family: var(--display); font-weight: 600; letter-spacing: -.03em; line-height: 1.08;
@@ -91,6 +99,36 @@
     border-left: 2px solid var(--live); padding-left: .7rem;
   }
   .oops[hidden] { display: none; }
+
+  /* ── Patch bay: the top level ───────────────────────────────────── */
+  /* Full-width rows rather than cards, so the top level cannot be mistaken for the format
+     cards one step in. Each row carries a live readout on the right — real counts, not
+     decoration, so the bay says what is waiting before anything is clicked. */
+  .bay { display: grid; border-top: 1px solid var(--seam); margin-bottom: 2rem; }
+  .jack {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: baseline;
+    gap: .35rem 1.1rem; width: 100%; text-align: left; font: inherit; color: var(--paper);
+    background: none; border: 0; border-bottom: 1px solid var(--seam); cursor: pointer;
+    padding: 1.35rem .35rem; transition: background .18s, padding-left .18s;
+  }
+  .jack:hover:not(:disabled), .jack:focus-visible { background: rgba(255,179,64,.05); padding-left: .8rem; }
+  .jack:disabled { cursor: not-allowed; color: var(--paper-dim); }
+  .jack .no { font: 500 .7rem/1.6 var(--mono); letter-spacing: .1em; color: var(--paper-dim); }
+  .jack .lbl { font-family: var(--display); font-weight: 600; font-size: 1.35rem; letter-spacing: -.02em; }
+  .jack:hover:not(:disabled) .lbl { color: var(--amber); }
+  .jack .sub { grid-column: 2; font-size: .875rem; color: var(--paper-dim); }
+  .jack .read {
+    grid-row: 1 / span 2; grid-column: 3; align-self: center; text-align: right;
+    font: 500 .7rem/1.5 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--paper-dim);
+  }
+  .jack .read b { display: block; font: 600 1.5rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--paper); }
+  .jack:disabled .read b { color: var(--paper-dim); }
+  .jack .read[data-live="true"] b { color: var(--amber); }
+  @media (max-width: 34rem) {
+    .jack { grid-template-columns: auto 1fr; }
+    .jack .read { grid-row: auto; grid-column: 1 / -1; text-align: left; margin-top: .5rem; }
+    .jack .read b { display: inline; font-size: 1rem; margin-right: .4rem; }
+  }
 
   /* ── Mode blocks (dashboard) ────────────────────────────────────── */
   .modes { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
@@ -275,12 +313,16 @@
   .queue i { flex: 1; border-radius: 2px; background: var(--seam); min-width: 3px; }
   .queue i[data-s="graded"] { background: var(--pass); }
   .queue i[data-s="failed"] { background: var(--live); }
+  /* Never recorded, and the sitting is closed: an outline, so it reads as a gap in the set
+     rather than as work still to come. */
+  .queue i[data-s="missing"] { background: none; box-shadow: inset 0 0 0 1px var(--seam); }
   /* Only the segment currently being worked breathes, so a polling page reads as live
      without the whole row flickering. */
   .queue i[data-s="working"] { background: var(--amber); animation: cueing 1.4s ease-in-out infinite; }
   @keyframes cueing { 50% { opacity: .2; } }
   .past .legend { grid-column: 1 / -1; font: 400 .68rem/1.4 var(--mono); letter-spacing: .06em; color: var(--paper-dim); }
   .past .legend[data-s="partial"] { color: var(--live); }
+  .past .legend[data-s="open"] { color: var(--amber); }
   @media (max-width: 30rem) {
     .past { grid-template-columns: 1fr auto; }
     .past .go, .past .key { grid-column: 1 / -1; justify-self: start; }
@@ -369,7 +411,7 @@
 <body data-phase="standby">
 <div class="wrap">
   <header class="strip">
-    <span class="mark">The <em>Booth</em></span>
+    <button class="mark" id="to-home" disabled>The <em>Booth</em></button>
     <span class="mono-label" id="strip-sub">Interview practice</span>
     <span class="who" id="who" hidden>
       <span class="lamp" id="lamp">Standby</span>
@@ -425,8 +467,35 @@
     </form>
   </section>
 
-  <!-- 2. Dashboard ─────────────────────────────────────────────────── -->
+  <!-- 2. Home ──────────────────────────────────────────────────────── -->
+  <section class="view" id="view-home" hidden>
+    <h1 class="big" id="home-greeting">Welcome back.</h1>
+    <p class="lede" id="home-lede">Practise out loud, then read the grading back. Everything you've recorded stays here.</p>
+    <div class="bay">
+      <button class="jack" id="jack-learning" disabled aria-describedby="jack-learning-sub">
+        <span class="no">01</span>
+        <span class="lbl">Learning</span>
+        <span class="sub" id="jack-learning-sub">Read the material behind a topic before you're questioned on it. Not built yet.</span>
+        <span class="read">Soon<b>—</b></span>
+      </button>
+      <button class="jack" id="jack-take" aria-describedby="jack-take-sub">
+        <span class="no">02</span>
+        <span class="lbl">Take an assessment</span>
+        <span class="sub" id="jack-take-sub">Pick a topic and a level, answer out loud, submit the set for grading.</span>
+        <span class="read">Questions<b id="jack-take-n">—</b></span>
+      </button>
+      <button class="jack" id="jack-past" aria-describedby="jack-past-sub">
+        <span class="no">03</span>
+        <span class="lbl">Past assessments</span>
+        <span class="sub" id="jack-past-sub">Everything you've started — in progress, still grading, and finished.</span>
+        <span class="read" id="jack-past-read">Sittings<b id="jack-past-n">—</b></span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 2b. Format ───────────────────────────────────────────────────── -->
   <section class="view" id="view-dashboard" hidden>
+    <div class="crumb"><button data-go="home">← Home</button><span class="mono-label">Take an assessment</span></div>
     <h1 class="big">Pick your format.</h1>
     <p class="lede">One is ready now. The other two need a paid tier for live streaming and video.</p>
     <div class="modes">
@@ -449,20 +518,19 @@
         <span class="flow">converse → follow-ups</span>
       </button>
     </div>
-    <p class="hint">Been here before? <button type="button" id="to-history">See your past interviews</button></p>
   </section>
 
-  <!-- 2b. History ──────────────────────────────────────────────────── -->
+  <!-- 2c. Past assessments ─────────────────────────────────────────── -->
   <section class="view" id="view-history" hidden>
-    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Past interviews</span></div>
+    <div class="crumb"><button data-go="home">← Home</button><span class="mono-label">Past assessments</span></div>
     <h1 class="big">Where you've been.</h1>
-    <p class="lede" id="history-lede">Every interview you've submitted, newest first. Grading runs in the background — open one once it's ready.</p>
+    <p class="lede" id="history-lede">Every assessment you've started, newest first. Grading runs in the background — open one once it's ready.</p>
     <div id="history-list" aria-live="polite"></div>
   </section>
 
   <!-- 3. Topic + expertise ─────────────────────────────────────────── -->
   <section class="view" id="view-setup" hidden>
-    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Vocal</span></div>
+    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Vocal assessment</span></div>
     <h1 class="big">What are we practising?</h1>
     <p class="lede">Pick a topic, then set the bar you want to be held to.</p>
 
@@ -539,7 +607,7 @@
   <!-- 5. Report ────────────────────────────────────────────────────── -->
   <section class="view" id="view-report" hidden>
     <div class="crumb no-print">
-      <button id="to-past">← Past interviews</button>
+      <button id="to-past">← Past assessments</button>
       <button id="again">↻ Practise again</button>
     </div>
     <div class="sheet-head">
@@ -568,8 +636,13 @@
 <script>
 const $ = id => document.getElementById(id);
 const SEGMENTS = 24;
-const VIEWS = ['login', 'signup', 'dashboard', 'history', 'setup', 'interview', 'report'];
+const VIEWS = ['login', 'signup', 'home', 'dashboard', 'history', 'setup', 'interview', 'report'];
 const GATES = ['login', 'signup'];
+// What the strip says you are in, per view. Home is the only one with nothing above it.
+const WHERE = {
+  home: 'Home', dashboard: 'Take an assessment', history: 'Past assessments',
+  setup: 'Vocal · free tier', interview: 'Vocal · free tier', report: 'Report',
+};
 const PARAMS = ['completeness', 'correctness', 'relevance'];
 const LEVEL_BLURB = {
   beginner: 'Graded on the core idea in plain language and accurate fundamentals. Missing edge cases and complexity analysis cost you nothing.',
@@ -593,7 +666,10 @@ function show(name) {
   VIEWS.forEach(v => $(`view-${v}`).hidden = v !== name);
   const gate = GATES.includes(name);
   $('who').hidden = gate;
-  $('strip-sub').textContent = gate ? 'Interview practice' : 'Vocal · free tier';
+  // The wordmark is the way home from anywhere, so it is only inert on the login screen
+  // and on home itself.
+  $('to-home').disabled = gate || name === 'home';
+  $('strip-sub').textContent = gate ? 'Interview practice' : WHERE[name];
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -635,7 +711,7 @@ function signedIn(profile) {
   state.level = profile.default_level;
   $('who-name').textContent = profile.name;
   $('who-badge').textContent = profile.name[0].toUpperCase();
-  show('dashboard');
+  openHome();
 }
 
 // Both forms submit the same way; only the endpoint and the error slot differ.
@@ -663,24 +739,73 @@ $('sign-out').onclick = async () => {
   await fetch('/logout', { method: 'POST' });
   stopPolling();                                // no fetching another account's history
   $('history-list').innerHTML = '';
+  $('topics').innerHTML = '';                   // and none of their topic choice either
   bank = null;                                  // the next account fetches its own bank
   state.candidate = '';
+  state.topic = '';
   setPhase('standby');
   show('login');
 };
 
-// ── 2. Dashboard → setup ──────────────────────────────────────────────
+// ── 2. Home ───────────────────────────────────────────────────────────
+// The one screen with nothing above it, and the only route to the other two. Its readouts
+// are the same /history and /questions the pages below use, so nothing new is fetched to
+// fill them and a stale count cannot disagree with the page it leads to.
+function openHome() {
+  stopPolling();               // home does not show the queue, so nothing here needs a poll
+  $('home-greeting').textContent = `${state.candidate.split(' ')[0]}, what are we doing?`;
+  show('home');
+  countUp();
+}
+
+async function countUp() {
+  const [past, questions] = await Promise.all([
+    get('/history').catch(() => null),
+    loadBank().catch(() => null),
+  ]);
+  $('jack-take-n').textContent = questions ? questions.length : '—';
+  if (!past) return;
+
+  $('jack-past-n').textContent = past.length;
+  // A count of sittings is not the useful number when something is grading — say that
+  // instead, and mark the readout live so the row reads as having news in it.
+  const working = past.reduce((n, s) => n + s.working, 0);
+  const open = past.filter(s => !s.finished_at).length;
+  const read = $('jack-past-read');
+  read.dataset.live = String(!!(working || open));
+  read.firstChild.textContent = working ? 'Grading' : open ? 'In progress' : 'Sittings';
+  $('jack-past-n').textContent = working || open || past.length;
+  $('home-lede').textContent = working
+    ? `${working} answer${working === 1 ? ' is' : 's are'} still being graded.`
+    : open
+      ? `${open} assessment${open === 1 ? '' : 's'} left open. Pick it up, or start a new one.`
+      : 'Practise out loud, then read the grading back. Everything you record stays here.';
+}
+
+$('to-home').onclick = () => openHome();
+$('jack-take').onclick = () => show('dashboard');
+$('jack-past').onclick = () => openHistory();
+
+// ── 2b. Format → setup ────────────────────────────────────────────────
 let bank = null;   // every question, fetched once
+
+// Shared by the home readout and the setup page, so the bank is fetched once per session
+// however you arrive at it.
+async function loadBank() {
+  return bank ??= await get('/questions');
+}
 
 $('mode-vocal').onclick = async () => {
   show('setup');
-  if (bank) return;
   try {
-    bank = await get('/questions');
+    await loadBank();
   } catch (e) {
     $('topics').innerHTML = `<p class="none">Cannot reach the server: ${escape(e.message)}</p>`;
     return;
   }
+  // Built once, then left alone so a chosen topic and level survive a trip home. Keyed on
+  // what is actually rendered, not on `bank` — the home readout may have loaded that first.
+  if ($('topics').querySelector('.topic')) return;
   buildTopics();
   buildDial();
 };
@@ -729,7 +854,6 @@ document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => show(b.dat
 // candidate watches for their results. It polls only while something is outstanding.
 let poll = null;
 
-$('to-history').onclick = () => openHistory();
 $('to-past').onclick = () => openHistory();
 
 async function openHistory() {
@@ -749,7 +873,7 @@ async function refreshHistory() {
   }
   if (!past.length) {
     stopPolling();
-    $('history-list').innerHTML = '<p class="none">Nothing yet. Finish an interview and it shows up here.</p>';
+    $('history-list').innerHTML = '<p class="none">Nothing yet. Take an assessment and it shows up here.</p>';
     return;
   }
   $('history-list').innerHTML = `<div class="items">${past.map(pastRow).join('')}</div>`;
@@ -757,9 +881,12 @@ async function refreshHistory() {
 
   // Keep polling only while the worker still owes something, so an idle page is idle.
   const working = past.reduce((n, s) => n + s.working, 0);
+  const open = past.filter(s => !s.finished_at).length;
   $('history-lede').textContent = working
     ? `${working} answer${working === 1 ? '' : 's'} still being graded. This page updates itself — you can also close the tab and come back.`
-    : "Every interview you've submitted, newest first.";
+    : open
+      ? `${open} assessment${open === 1 ? ' is' : 's are'} still open. Anything you didn't submit is left where it was.`
+      : "Every assessment you've taken, newest first.";
   working ? startPolling() : stopPolling();
 }
 
@@ -777,30 +904,45 @@ function stopPolling() {
 }
 
 function pastRow(sitting) {
-  const when = new Date(`${sitting.finished_at.replace(' ', 'T')}Z`).toLocaleString();
+  const open = !sitting.finished_at;
+  const stamp = sitting.finished_at ?? sitting.started_at;
+  const when = new Date(`${stamp.replace(' ', 'T')}Z`).toLocaleString();
   const total = sitting.questions ?? sitting.answered;
   const score = sitting.overall ?? '—';
-  const done = total - sitting.working - sitting.stuck;
+
+  // Counted from the server rather than derived by subtracting the queue: a question that
+  // was never recorded has no answer row and no job, so the arithmetic scored it as graded.
+  const graded = sitting.graded;
 
   // One segment per question, in the order the desk works through them: what is graded,
-  // what is on the desk now, what is still waiting, what came back broken.
-  const segment = i => i < done ? 'graded'
-    : i < done + sitting.working ? (i === done ? 'working' : 'waiting')
-    : 'failed';
+  // what is on the desk now, what is still waiting, what came back broken, what is
+  // untouched. An open sitting's untouched segments are simply not recorded yet.
+  const segment = i => i < graded ? 'graded'
+    : i < graded + sitting.working ? (i === graded ? 'working' : 'waiting')
+    : i < graded + sitting.working + sitting.stuck ? 'failed'
+    : open ? 'waiting' : 'missing';
   const ladder = Array.from({ length: total }, (_, i) => `<i data-s="${segment(i)}"></i>`).join('');
 
-  const legend = sitting.working
-    ? { s: 'working', text: `${done} of ${total} graded · ${sitting.working} on the desk` }
-    : sitting.stuck
-      ? { s: 'partial', text: `${done} of ${total} graded · ${sitting.stuck} couldn't be graded` }
-      : { s: 'done', text: `${total} of ${total} graded` };
+  const legend = open
+    ? { s: 'open', text: `In progress · ${sitting.answered} of ${total} recorded` }
+    : sitting.working
+      ? { s: 'working', text: `${graded} of ${total} graded · ${sitting.working} on the desk` }
+      : sitting.stuck
+        ? { s: 'partial', text: `${graded} of ${total} graded · ${sitting.stuck} couldn't be graded` }
+        : { s: 'done', text: `${graded} of ${total} graded` };
+
+  // An open sitting has no report to read, and it cannot be resumed either: the questions
+  // and the recordings only ever lived in the tab it was started in.
+  const action = open
+    ? `<button class="ghost" data-open="${sitting.id}">See what's recorded</button>`
+    : `<button class="key${sitting.working ? '' : ' go'}" data-open="${sitting.id}">
+        ${sitting.working ? 'View progress' : 'View report'}</button>`;
 
   return `<div class="past" data-id="${sitting.id}">
-    <span class="when">${escape(when)}</span>
+    <span class="when">${escape(when)}${open ? ' · started' : ''}</span>
     <span class="what">${escape(sitting.topic || 'Every topic')} · ${escape(sitting.level)}</span>
     <span class="sc" style="color:${sitting.overall === null ? 'var(--paper-dim)' : tone(score)}">${score}</span>
-    <button class="key${sitting.working ? '' : ' go'}" data-open="${sitting.id}">
-      ${sitting.working ? 'View progress' : 'View report'}</button>
+    ${action}
     <span class="queue" aria-hidden="true">${ladder}</span>
     <span class="legend" data-s="${legend.s}">${escape(legend.text)}</span>
   </div>`;
@@ -1187,19 +1329,24 @@ function renderReport(results, sitting) {
   const allGaps = [...new Set(graded.flatMap(r => r.report.comments.gaps))].slice(0, 6);
   const allWins = [...new Set(graded.flatMap(r => r.report.comments.strengths))].slice(0, 6);
   const allErrors = graded.flatMap(r => r.report.errors);
-  const stamp = new Date(`${sitting.finished_at.replace(' ', 'T')}Z`).toLocaleString();
+  // An open sitting is reachable from the list too, and it has no finished_at yet.
+  const when = sitting.finished_at ?? sitting.started_at;
+  const stamp = new Date(`${when.replace(' ', 'T')}Z`).toLocaleString();
 
   $('sheet-meta').textContent =
     `${state.candidate} · ${state.topic || 'Every topic'} · ${title(state.level)} · ${stamp}`;
 
   // Nothing graded yet: the summary would be a page of zeroes and NaNs, so say so instead.
   if (!graded.length) {
-    $('report').innerHTML = `
-      <h1 class="big">${escape(state.candidate)}, this one isn't graded yet.</h1>
-      <p class="lede">${escape(state.topic || 'Every topic')} · ${escape(state.level)} level · ${escape(stamp)}</p>
-      <p class="none">${pending.length
+    const why = !sitting.finished_at
+      ? 'This one was never submitted, so nothing was graded. Anything recorded in it is listed below.'
+      : pending.length
         ? `${pending.length} answer${pending.length === 1 ? ' is' : 's are'} still in the queue. Come back in a moment.`
-        : `None of your answers could be graded: ${escape(failed[0]?.failed ?? 'unknown error')}`}</p>
+        : `None of your answers could be graded: ${escape(failed[0]?.failed ?? 'unknown error')}`;
+    $('report').innerHTML = `
+      <h1 class="big">${escape(state.candidate)}, this one isn't graded${sitting.finished_at ? ' yet' : ''}.</h1>
+      <p class="lede">${escape(state.topic || 'Every topic')} · ${escape(state.level)} level · ${escape(stamp)}</p>
+      <p class="none">${why}</p>
       <div><h2>Question by question</h2>
         <div class="items">${results.map(item).join('')}</div></div>`;
     return;

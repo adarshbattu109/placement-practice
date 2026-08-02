@@ -215,8 +215,12 @@ def _check_assessments(client):
 
     _check_kept(sitting)
 
-    # An open sitting is not history yet, but its answers are already readable.
-    assert client.get("/history").json() == []
+    # An open sitting is listed as in progress, not hidden — the dashboard is the only route
+    # back to one, so a half-finished interview must not vanish.
+    listed = client.get("/history").json()
+    assert [s["id"] for s in listed] == [sitting], listed
+    assert listed[0]["finished_at"] is None and listed[0]["answered"] == 2, listed[0]
+
     live = client.get(f"/assessments/{sitting}").json()
     assert len(live["answers"]) == 2 and live["overall"] is None, live
     assert live["answers"][0]["text"], "the question text comes back for the history page"
@@ -231,6 +235,7 @@ def _check_assessments(client):
     assert len(past) == 1 and past[0]["answered"] == 2 and past[0]["overall"] == 0, past
     assert past[0]["finished_at"], "a finished sitting must carry its timestamp"
     assert past[0]["working"] == 0 and past[0]["stuck"] == 0, past
+    assert past[0]["graded"] == 2, "both silent answers were graded, as zeroes"
 
     # A closed sitting takes no more answers, and it must fail before the ASR call.
     closed = {"question_id": "dsa-1", "level": "beginner", "assessment_id": sitting}
@@ -268,7 +273,8 @@ def _check_queued(client):
     # Finishing does not wait for the queue: it closes writes and leaves grading running.
     closed = client.post(f"/assessments/{sitting}/finish").json()
     assert closed == {"id": sitting, "overall": None, "working": 1}, closed
-    assert client.get("/history").json()[0]["working"] == 1
+    newest = client.get("/history").json()[0]
+    assert newest["id"] == sitting and newest["working"] == 1 and newest["graded"] == 0, newest
 
 
 def _check_isolation(client, sitting):

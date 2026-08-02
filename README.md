@@ -107,6 +107,21 @@ The same spoken answer scored **90 as a beginner and 55 as an expert** in testin
 advanced and expert barely separate on the judge's raw scores — the weights are what pull
 them apart. `LEVELS` in `app/evaluate.py` is the calibration knob; expect to tune it.
 
+## Screens
+
+Signing in lands on **Home**, which is three rows and nothing else:
+
+| Row | Goes to | Readout |
+|-----|---------|---------|
+| **Learning** | Nothing yet — the material behind a topic | `Soon` |
+| **Take an assessment** | The format cards, then setup and the interview | Questions in the bank |
+| **Past assessments** | Every sitting you have opened | Answers still grading, else sittings open, else the total |
+
+The readouts are real counts pulled on load, so home says what is waiting before you click
+anything. An unfinished sitting is listed under past assessments rather than hidden, but it
+cannot be resumed — the questions and the recordings only ever lived in the tab it started
+in, so the row offers to show what was recorded.
+
 ## Modes
 
 | Mode | Question | Answer | Status |
@@ -163,7 +178,7 @@ cookie and returns 401 without one.
 | `POST /assessments` | Multipart: `level`, `questions`, `topic` → `{"id": n}`, an open sitting |
 | `POST /submit` | Multipart: `question_id`, `level`, `audio` (16 kHz mono WAV), `assessment_id` → **202** `{question_id, queued, report}` |
 | `POST /assessments/{id}/finish` | Closes the sitting → `{id, overall, working}`. Idempotent, and it does not wait for the queue |
-| `GET /history` | Your sittings, newest first, each with `working` and `stuck` counts |
+| `GET /history` | Every sitting you have opened, newest first — in progress and finished alike, each with `graded`, `working` and `stuck` counts. `finished_at: null` marks one still open |
 | `GET /assessments/{id}` | One sitting with every answer and every unfinished job. 404 for anyone else's |
 
 `/submit` answers 202, not 200: the answer is accepted, not graded. `queued: true` means the
