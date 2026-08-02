@@ -1,22 +1,37 @@
-# placement-practice
+# Placemint.Academy
 
 Spoken mock-interview practice. Pick a topic and an expertise level, record your answer out
 loud, and get it transcribed and graded on **Completeness**, **Correctness** and **Relevance**
 against the question's ideal answer.
 
-Everything runs on the HuggingFace Inference API. **No model weights are downloaded** — the
-whole thing installs in seconds and runs on a laptop.
+The repository, the package and the console script are all still `placement-practice` —
+`Placemint.Academy` is the product name, and renaming the distribution would break
+`uv run practice` and every existing install for no benefit.
+
+Every model call is remote, on the HuggingFace Inference API by default. **No model weights
+are downloaded** — the whole thing installs in seconds and runs on a laptop. Any of the three
+roles can be pointed at another provider with two environment variables; see
+[Choosing your models](#choosing-your-models).
 
 ## Quickstart
 
 ```bash
 uv sync
-cp .env.example .env.local     # then paste in your HF_TOKEN
+cp .env.example .env.local     # then fill in HF_TOKEN and SECRET_KEY
 uv run practice
 ```
 
-Open <http://localhost:8000>, log in with any name and password, pick **Vocal**, choose a
-topic and level, and start answering.
+Open <http://localhost:8000>, **create an account**, pick **Vocal**, choose a topic and
+level, and start answering. Signup is open to anyone who can reach the server.
+
+`SECRET_KEY` signs the session cookie and has no default — generate one with:
+
+```bash
+python -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+Changing it later logs everyone out. Accounts and the question bank live in
+`data/practice.db`, created and seeded on first run.
 
 ### Getting an HF token
 
@@ -30,23 +45,77 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxx
 The free community tier is enough. A 20-question session costs roughly $0.15 of included
 credit — see [Cost](#cost).
 
+## Choosing your models
+
+Three roles call out to a model, and each is configured independently. The defaults live in
+`ENDPOINTS` in `src/constants/constants.py`; every field is overridable from `.env.local`, so
+switching a provider needs no code change.
+
+| Role | Default | Does |
+|------|---------|------|
+| `ASR` | `openai/whisper-large-v3` | Transcribes the recorded answer |
+| `JUDGE` | `meta-llama/Llama-3.3-70B-Instruct` | Scores the transcript |
+| `TTS` | `hexgrad/Kokoro-82M` | Speaks the question aloud, once, at build time |
+
+Four variables per role, all optional:
+
+| Variable | Effect |
+|----------|--------|
+| `<ROLE>_URL` | Base url of an OpenAI-compatible server. Unset means HuggingFace |
+| `<ROLE>_MODEL` | The model name that server knows it by |
+| `<ROLE>_KEY` | Its api key. Falls back to `HF_TOKEN`; local servers ignore it |
+| `<ROLE>_TIMEOUT` | Seconds. Must stay under `JOB_STALE_MINUTES`, asserted at import |
+
+Setting a `_URL` switches that role to the OpenAI wire format, which is what Groq, OpenAI,
+vLLM, LM Studio and Ollama all speak. So ASR on Groq, priced at a published $0.04/audio-hour:
+
+```
+ASR_URL=https://api.groq.com/openai/v1
+ASR_MODEL=whisper-large-v3-turbo
+ASR_KEY=gsk_...
+```
+
+Or the judge on a local Ollama — no key, no per-token cost, and the ASR bill untouched:
+
+```
+JUDGE_URL=http://localhost:11434/v1
+JUDGE_MODEL=qwen2.5:14b
+```
+
+A smaller judge is a real change to the product, not a free swap: `LEVELS` is calibrated
+against 70B output, and published work finds small judges shift score distributions and flip
+on ~14% of repeat runs. Use one for development, and re-check the calibration before trusting
+its scores.
+
 ## How it works
 
 ```
-browser                        server                      HuggingFace Inference API
+browser                        server                      wherever ENDPOINTS points
 ───────                        ──────                      ─────────────────────────
 MediaRecorder
   ↓ resample 16 kHz mono
   ↓ encode WAV
-  └── POST /submit ──────────→ decode + silence gate
+  └── POST /submit ──────────→ keep the take as Opus
                                    ↓
-                               ASR ─────────────────────→ openai/whisper-large-v3
+                               silence gate
+                                   ↓
+                               queue one job
+  ←──────── 202 queued ─────────┘
+
+                               grading worker (background thread)
+                                   ↓ every 3s: claim one job
+                               transcribe('asr') ───────→ whisper-large-v3
                                    ↓ transcript
-                               judge ───────────────────→ meta-llama/Llama-3.3-70B-Instruct
+                               chat('judge') ───────────→ Llama-3.3-70B-Instruct
                                    ↓ 3 scores + notes
-                               weight by level
-  ←──────── JSON report ────────┘
+                               weight by level, store, re-average the sitting
+  GET /history (poll) ────────────→ ↓
+  ←──────── the queue draining ────┘
 ```
+
+Nobody waits on a spinner: ASR is ~3s and the judge is 20–60s, so a full sitting would be
+twenty minutes of staring. `/submit` returns as soon as the take is stored, and the history
+page polls until the scores land.
 
 The browser does the audio work — resampling and WAV encoding happen in
 `AudioContext`/`OfflineAudioContext`, so the server needs no ffmpeg.
@@ -55,6 +124,38 @@ A **silence gate** sits in front of ASR. Whisper hallucinates fluent text from a
 recording (a real 3-second silence transcribed as *"Thank you very much."* ten times over),
 so a recording under a second or below an RMS of 0.005 short-circuits to a zero report
 instead of being sent.
+
+## Hearing the question
+
+Every candidate hears the same 21 sentences, so they are spoken **once, to disk**, and served
+as files thereafter:
+
+```bash
+uv run python -m src.helpers.speech            # the default voice, whatever is missing
+uv run python -m src.helpers.speech af_heart be-1   # one question, to audition a voice
+```
+
+Re-running it is free — anything already in `data/audio/` is skipped, so this is also how a
+topic added later gets its audio. The files are committed, so a clone has the spoken bank
+without a token. `GET /questions/{id}/audio` serves them and 404s for a question that has
+not been generated; the interview shows a **Hear it** button only when the audio loads, and
+the question is always there as text.
+
+Generating on demand was measured at **72.9s for 4.5s of audio** — a non-starter in a
+request, and the same bytes every time. Each question is ~19 kB as Opus at 24 kHz.
+
+Speech is the one role that can be pointed at a local server purely to avoid a bill, since
+nothing about it is in the request path:
+
+```
+TTS_URL=http://localhost:8880/v1
+TTS_MODEL=kokoro
+```
+
+`TTS_VOICES` in `src/constants/constants.py` lists the personas. Kokoro's names encode
+accent and gender (`af_` American female, `am_` American male, `bf_`/`bm_` British) — one
+voice is generated today, and the path is `data/audio/<voice>/<id>.opus` so adding more is
+new files rather than a migration.
 
 ## Grading
 
@@ -86,6 +187,26 @@ The same spoken answer scored **90 as a beginner and 55 as an expert** in testin
 advanced and expert barely separate on the judge's raw scores — the weights are what pull
 them apart. `LEVELS` in `app/evaluate.py` is the calibration knob; expect to tune it.
 
+## Screens
+
+Signing in lands on **Home**, which is three rows and nothing else:
+
+| Row | Goes to | Readout |
+|-----|---------|---------|
+| **Learning** | Nothing yet — the material behind a topic | `Soon` |
+| **Take an assessment** | The format cards, then setup and the interview | Questions in the bank |
+| **Past assessments** | Every sitting you have opened | Answers still grading, else sittings open, else the total |
+
+The readouts are real counts pulled on load, so home says what is waiting before you click
+anything. An unfinished sitting is listed under past assessments rather than hidden, but it
+cannot be resumed — the questions and the recordings only ever lived in the tab it started
+in, so the row offers to show what was recorded.
+
+Because of that, **leaving a live interview asks first.** Submitting is the only thing that
+closes a sitting, so every way out — the crumb, the wordmark, signing out, closing the tab —
+puts up the submit dialog, with "Leave without submitting" spelled out beside it rather than
+being what happens by accident.
+
 ## Modes
 
 | Mode | Question | Answer | Status |
@@ -110,22 +231,53 @@ return HTTP 402 once the monthly credit is exhausted, and the allowance resets m
 app/
   __init__.py      entrypoint (uv run practice), TLS trust store, .env, logging
   main.py          FastAPI app and routes
-  evaluate.py      the grader — levels, weights, judge prompt, parsing
+  evaluate.py      the grader — judge prompt, parsing, weighting
+  worker.py        the background thread that drains the grading queue
   index.html       the entire frontend, one file, no build step
-  questions.json   21 questions across 6 topics
-poc_mic.py         standalone mic → transcript check, outside the web app
+src/
+  constants/       ENDPOINTS, levels and weights, thresholds, every filepath
+  helpers/         inference.py — every remote model call, and who serves it
+                   speech.py    — speaks the bank to disk; a build step, never a request
+                   security.py  — scrypt passwords, hmac session cookies
+  db/              schema.sql and store.py, the only file containing SQL
+data/
+  questions.json   21 questions across 6 topics — the seed for a fresh database
+  audio/<voice>/   the bank spoken aloud, generated once and committed
+  practice.db      accounts, the live question bank, past interviews (gitignored)
+tests/             the pre-push suite: uv run python -m tests
 logs/              rotating server.log (gitignored)
 ```
 
 ## API
 
+Everything except `GET /`, `POST /signup`, `POST /login` and `GET /levels` needs a session
+cookie and returns 401 without one.
+
 | Route | Purpose |
 |-------|---------|
 | `GET /` | The app |
+| `POST /signup` | Multipart: `email`, `name`, `password`, `level` → profile, signs you in |
+| `POST /login` | Multipart: `email`, `password` → profile |
+| `POST /logout` | Clears the session cookie |
+| `GET /me` | The signed-in profile, or 401 |
 | `GET /topics` | Available topics |
 | `GET /questions?topic=` | Questions, optionally filtered |
+| `GET /questions/{id}/audio` | The question spoken aloud, as Opus. 404 until the build step generates it |
 | `GET /levels` | `["beginner", "advanced", "expert"]` |
-| `POST /submit` | Multipart: `question_id`, `level`, `audio` (16 kHz mono WAV) → JSON report |
+| `POST /assessments` | Multipart: `level`, `questions`, `topic` → `{"id": n}`, an open sitting |
+| `POST /submit` | Multipart: `question_id`, `level`, `audio` (16 kHz mono WAV), `assessment_id` → **202** `{question_id, queued, report}` |
+| `POST /assessments/{id}/finish` | Closes the sitting → `{id, overall, working}`. Idempotent, and it does not wait for the queue |
+| `GET /history` | Every sitting you have opened, newest first — in progress and finished alike, each with `graded`, `working` and `stuck` counts. `finished_at: null` marks one still open |
+| `GET /assessments/{id}` | One sitting with every answer and every unfinished job. 404 for anyone else's |
+
+`/submit` answers 202, not 200: the answer is accepted, not graded. `queued: true` means the
+report is `null` and the worker has it — poll `/history` or `/assessments/{id}`.
+
+Two cases come back graded on the spot instead, with `queued: false` and a report attached:
+a recording that trips the silence gate (the zero is local, and spending an ASR call on a
+dead recording is what the gate exists to prevent), and a submit with no `assessment_id`
+(there is no sitting to queue against and nobody to poll, so `curl -F question_id=…` stays a
+one-command check of the whole chain).
 
 A report looks like:
 
@@ -148,7 +300,10 @@ A report looks like:
 ## Development
 
 ```bash
-uv run python -m app.evaluate    # self-check: parsing + weighting, judge stubbed
+uv run python -m src.helpers.inference  # self-check: endpoint routing, all three call shapes
+uv run python -m src.helpers.speech     # generates the spoken bank — needs a token, unlike the rest
+uv run python -m app.evaluate           # self-check: parsing + weighting, judge stubbed
+uv run python -m app.worker             # self-check: the queue drains, failures park
 uv tool run ruff check .
 uv tool run ruff format .
 ```
@@ -167,19 +322,46 @@ machine with a TLS-intercepting proxy — even though `curl` works. Don't remove
 ```bash
 say -o /tmp/a.aiff "a hash map hashes the key to a bucket index"
 afconvert -f WAVE -d LEI16@16000 -c 1 /tmp/a.aiff /tmp/a.wav
-curl -F question_id=dsa-1 -F level=advanced -F audio=@/tmp/a.wav http://localhost:8000/submit
+curl -c /tmp/jar -F email=me@example.com -F name=Me -F password=devpassword \
+  http://localhost:8000/signup
+curl -b /tmp/jar -F question_id=dsa-1 -F level=advanced -F audio=@/tmp/a.wav \
+  http://localhost:8000/submit
 ```
+
+### Running the checks
+
+```bash
+uv run python -m tests          # everything: self-checks, routes, frontend, packaging
+uv run python -m tests api      # one check by name
+```
+
+No test touches the network, so none of them need `HF_TOKEN`.
 
 ## Known limits
 
-- **Login is a placeholder.** Any password works, nothing is stored server-side. Don't expose
-  this server to an untrusted network — see [SECURITY.md](SECURITY.md).
 - **Scores aren't reproducible.** The judge runs at `temperature=0.2`, so the same answer
   varies by a few points between runs.
-- **No retry on judge failure.** A transient 502 from the provider loses that recording.
-- **Nothing is persisted.** Close the tab and the report is gone.
-- **Audio leaves your machine.** Recordings go to the HuggingFace Inference API for
-  transcription. Don't speak anything confidential.
+- **A job gives up after three attempts.** ASR and the judge both fail transiently, so the
+  worker retries; past that the answer is parked with its error and the sitting reads as
+  partly graded. The take is still stored, so the fix is re-running it, not re-recording.
+- **One worker thread.** A job waits up to one 3-second poll per stage, and a sitting is
+  graded one answer at a time — a 20-question sitting takes 20 × ~25s to come back.
+- **No password reset,** and no way to revoke one session — rotating `SECRET_KEY` signs
+  everyone out at once. Don't expose this server to an untrusted network; see
+  [SECURITY.md](SECURITY.md).
+- **Audio leaves your machine.** Recordings go to whichever provider `ASR_URL` names, the
+  HuggingFace Inference API by default. Don't speak anything confidential.
+- **The spoken bank is incomplete.** Generating it needs credits, and HF's included monthly
+  allowance ran out one question in. The interview reads as text without it, and re-running
+  the build step fills the gaps.
+- **One voice, and the provider may be ignoring it.** The Inference API's TTS call has no
+  voice argument, so it goes through `extra_body` — and a provider that does not honour it
+  returns its default rather than an error. HF also routes Kokoro per accent
+  (`fal-ai/kokoro/american-english`), so a British voice may need a different endpoint
+  entirely. Listen to a new voice before adding it to `TTS_VOICES`.
+- **Switching a provider is not switching a result.** The endpoint table makes the swap free;
+  the calibration behind it is not. `LEVELS` is tuned against 70B judge output, so a different
+  judge needs its weights re-checked before its scores mean anything.
 
 ## License
 

@@ -1,53 +1,20 @@
 """Grade a transcribed answer on Completeness, Correctness and Relevance.
 
-An LLM judge on the HF Inference API scores the three against the ideal answer.
+An LLM judge scores the three against the ideal answer. Which judge, and where it is served
+from, is `src/helpers/inference.py`'s business — this file owns the prompt and the parser.
 """
 
-import functools
 import json
-import os
 import re
 
-JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-
-PARAMETERS = ("completeness", "correctness", "relevance")
-
-# What each level is graded against, and how the three parameters are weighted for it.
-# Weights must sum to 1 — asserted at import, so a bad edit fails loudly.
-# ponytail: hand-set ratios, the calibration knob for the whole grader
-LEVELS = {
-    "beginner": {
-        # Getting the fundamentals right matters most; breadth comes later.
-        "weights": {"completeness": 0.20, "correctness": 0.55, "relevance": 0.25},
-        "brief": (
-            "The candidate is a BEGINNER. Expect the core idea in plain language and accurate "
-            "fundamentals. Do not penalise missing edge cases, complexity analysis or production "
-            "concerns. Reward a clear correct mental model. Grade generously on completeness."
-        ),
-    },
-    "advanced": {
-        # Balanced: knows the mechanism, now has to cover it and stay on point.
-        "weights": {"completeness": 0.35, "correctness": 0.40, "relevance": 0.25},
-        "brief": (
-            "The candidate is ADVANCED. Expect the mechanism explained correctly plus tradeoffs, "
-            "complexity, and at least one alternative approach with a reason to prefer it. "
-            "Hand-waving over the hard part costs marks."
-        ),
-    },
-    "expert": {
-        # Correctness is assumed at this level, so depth and focus carry the score.
-        "weights": {"completeness": 0.45, "correctness": 0.35, "relevance": 0.20},
-        "brief": (
-            "The candidate is an EXPERT. Expect precision, failure modes, edge cases and real "
-            "production concerns, with the reasoning behind each choice. Penalise vagueness, "
-            "textbook recitation without judgement, and any imprecise claim. Grade strictly."
-        ),
-    },
-}
-
-for _name, _spec in LEVELS.items():
-    assert set(_spec["weights"]) == set(PARAMETERS), f"{_name}: weights must cover {PARAMETERS}"
-    assert abs(sum(_spec["weights"].values()) - 1) < 1e-9, f"{_name}: weights must sum to 1"
+from src.constants.constants import (
+    JUDGE_MAX_TOKENS,
+    JUDGE_TEMPERATURE,
+    LEVELS,
+    MIN_WORDS,
+    PARAMETERS,
+)
+from src.helpers.inference import chat
 
 SYSTEM = """You are a strict but fair technical interviewer grading a spoken answer.
 
@@ -78,15 +45,6 @@ Each note is one sentence. "errors" lists specific incorrect claims, empty if no
 candidate as "you". "suggestion" is one concrete sentence on what to do next."""
 
 
-@functools.cache
-def _client():
-    from huggingface_hub import InferenceClient
-
-    if not os.getenv("HF_TOKEN"):
-        raise RuntimeError("HF_TOKEN is not set. Add it to .env.local, then restart the server.")
-    return InferenceClient(token=os.environ["HF_TOKEN"], timeout=120)
-
-
 def _judge(transcript, question, ideal_answer, level):
     """Ask the judge model for the three scores. Returns the parsed dict."""
     prompt = (
@@ -95,14 +53,15 @@ def _judge(transcript, question, ideal_answer, level):
         f"EXPERTISE LEVEL: {level}\n{LEVELS[level]['brief']}\n\n"
         f"CANDIDATE TRANSCRIPT:\n{transcript}"
     )
-    reply = _client().chat_completion(
-        model=JUDGE_MODEL,
-        messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-        max_tokens=900,
-        temperature=0.2,
-        response_format={"type": "json_object"},
+    return _parse(
+        chat(
+            "judge",
+            [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
+            max_tokens=JUDGE_MAX_TOKENS,
+            temperature=JUDGE_TEMPERATURE,
+            response_format={"type": "json_object"},
+        )
     )
-    return _parse(reply.choices[0].message.content)
 
 
 def _parse(raw):
@@ -130,7 +89,7 @@ def evaluate(transcript, question, ideal_answer, level="advanced"):
         raise ValueError(f"Unknown level {level!r}. Expected one of {sorted(LEVELS)}.")
 
     transcript = (transcript or "").strip()
-    if len(transcript.split()) < 5:
+    if len(transcript.split()) < MIN_WORDS:
         return {
             "transcript": transcript,
             "score": 0,
@@ -166,7 +125,10 @@ def evaluate(transcript, question, ideal_answer, level="advanced"):
 
 
 def demo():
-    """Self-check: parsing and weighting, with the remote judge stubbed out."""
+    """Self-check: parsing and per-level weighting, with the judge stubbed out.
+
+    Which backend serves the judge is `inference.demo()`'s business now, not this one's.
+    """
     global _judge
 
     assert (

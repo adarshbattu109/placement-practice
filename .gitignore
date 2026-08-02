@@ -227,3 +227,7 @@ __marimo__/
 
 # Standalone mic->HF proof-of-concept, superseded by the browser recorder
 poc_mic.py
+# The local practice database. data/questions.json and data/audio/ stay tracked.
+data/*.db
+data/*.db-shm
+data/*.db-wal

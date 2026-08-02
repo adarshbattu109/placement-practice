@@ -18,3 +18,13 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=500]
       - id: detect-private-key
+
+  - repo: local
+    hooks:
+      # Push-stage only: the suite builds a wheel, which is too slow for every commit.
+      - id: tests
+        name: full check suite
+        entry: uv run python -m tests
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

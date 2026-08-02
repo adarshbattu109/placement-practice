@@ -1,6 +1,6 @@
 [project]
 name = "placement-practice"
-version = "0.1.0"
+version = "0.2.0"
 description = "Spoken mock-interview practice: record an answer, get it transcribed and graded"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -24,7 +24,19 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["app"]
+packages = ["app", "src"]
+
+# Neither is a Python package, so packages= alone would build a wheel that starts up and
+# then fails on the first query. Files are named one by one rather than force-including
+# data/ wholesale: force-include ignores exclude=, so a directory would drag the local
+# practice.db in with its accounts. tests/test_packaging.py fails the build if it ever does.
+[tool.hatch.build.targets.wheel.force-include]
+"data/questions.json" = "data/questions.json"
+"src/db/schema.sql" = "src/db/schema.sql"
+# The spoken bank. A directory is safe here where data/ would not be: it holds only
+# generated .opus files, never the database. Whatever `python -m src.helpers.speech` has
+# produced ships; a question with no file simply has no audio, which the route handles.
+"data/audio" = "data/audio"
 
 [dependency-groups]
 dev = [

@@ -2,15 +2,12 @@
 
 import logging
 import logging.handlers
-import pathlib
 
 import truststore
 import uvicorn
 from dotenv import load_dotenv
 
-ROOT = pathlib.Path(__file__).parent.parent
-LOG_DIR = ROOT / "logs"
-LOG_FILE = LOG_DIR / "server.log"
+from src.constants.filepaths import LOG_DIR, LOG_FILE, ROOT
 
 # Use the OS trust store, so HF calls work behind a TLS-intercepting proxy.
 truststore.inject_into_ssl()

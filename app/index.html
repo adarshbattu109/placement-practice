@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Booth — mock interview practice</title>
+<title>Placemint.Academy — mock interview practice</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -39,8 +39,13 @@
     display: flex; align-items: center; gap: .9rem; flex-wrap: wrap;
     padding-bottom: 1rem; border-bottom: 1px solid var(--seam); margin-bottom: clamp(1.75rem, 4vw, 2.75rem);
   }
-  .mark { font-family: var(--display); font-weight: 800; font-size: 1.05rem; letter-spacing: -.02em; }
+  .mark {
+    font-family: var(--display); font-weight: 800; font-size: 1.05rem; letter-spacing: -.02em;
+    background: none; border: 0; padding: 0; color: var(--paper); cursor: pointer;
+  }
   .mark em { font-style: normal; color: var(--amber); }
+  .mark:disabled { cursor: default; }         /* on the login screen there is nowhere to go */
+  .mark:hover:not(:disabled) em { color: var(--paper); }
   .mono-label { font: 500 .7rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--paper-dim); }
   .who { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
   .who .name { font-family: var(--display); font-weight: 600; font-size: .95rem; }
@@ -65,6 +70,9 @@
     font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
   }
   .crumb button:hover { color: var(--amber); }
+  /* Without a divider the trail read as one phrase: "← Home Past assessments". Only before the
+     label — the report crumb's second child is another action, not the next level down. */
+  .crumb .mono-label::before { content: '/'; margin-right: .6rem; color: var(--seam); }
 
   h1.big {
     font-family: var(--display); font-weight: 600; letter-spacing: -.03em; line-height: 1.08;
@@ -76,12 +84,51 @@
   .gate { max-width: 24rem; margin: clamp(2rem, 10vh, 6rem) auto 0; }
   .field { display: grid; gap: .4rem; margin-bottom: 1rem; }
   .field label { font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--paper-dim); }
-  input[type=text], input[type=password] {
+  input[type=text], input[type=password], input[type=email], select {
     font: inherit; color: var(--paper); background: var(--panel); border: 1px solid var(--seam);
     border-radius: 10px; padding: .7rem .9rem; width: 100%;
   }
-  input:focus { border-color: var(--amber); outline: none; }
+  input:focus, select:focus { border-color: var(--amber); outline: none; }
   .hint { font-size: .8rem; color: var(--paper-dim); margin: 1rem 0 0; }
+  .hint button {
+    background: none; border: 0; padding: 0; color: var(--amber); cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .oops {
+    font-size: .85rem; color: var(--live); margin: 0 0 1rem;
+    border-left: 2px solid var(--live); padding-left: .7rem;
+  }
+  .oops[hidden] { display: none; }
+
+  /* ── Patch bay: the top level ───────────────────────────────────── */
+  /* Full-width rows rather than cards, so the top level cannot be mistaken for the format
+     cards one step in. Each row carries a live readout on the right — real counts, not
+     decoration, so the bay says what is waiting before anything is clicked. */
+  .bay { display: grid; border-top: 1px solid var(--seam); margin-bottom: 2rem; }
+  .jack {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: baseline;
+    gap: .35rem 1.1rem; width: 100%; text-align: left; font: inherit; color: var(--paper);
+    background: none; border: 0; border-bottom: 1px solid var(--seam); cursor: pointer;
+    padding: 1.35rem .35rem; transition: background .18s, padding-left .18s;
+  }
+  .jack:hover:not(:disabled), .jack:focus-visible { background: rgba(255,179,64,.05); padding-left: .8rem; }
+  .jack:disabled { cursor: not-allowed; color: var(--paper-dim); }
+  .jack .no { font: 500 .7rem/1.6 var(--mono); letter-spacing: .1em; color: var(--paper-dim); }
+  .jack .lbl { font-family: var(--display); font-weight: 600; font-size: 1.35rem; letter-spacing: -.02em; }
+  .jack:hover:not(:disabled) .lbl { color: var(--amber); }
+  .jack .sub { grid-column: 2; font-size: .875rem; color: var(--paper-dim); }
+  .jack .read {
+    grid-row: 1 / span 2; grid-column: 3; align-self: center; text-align: right;
+    font: 500 .7rem/1.5 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--paper-dim);
+  }
+  .jack .read b { display: block; font: 600 1.5rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--paper); }
+  .jack:disabled .read b { color: var(--paper-dim); }
+  .jack .read[data-live="true"] b { color: var(--amber); }
+  @media (max-width: 34rem) {
+    .jack { grid-template-columns: auto 1fr; }
+    .jack .read { grid-row: auto; grid-column: 1 / -1; text-align: left; margin-top: .5rem; }
+    .jack .read b { display: inline; font-size: 1rem; margin-right: .4rem; }
+  }
 
   /* ── Mode blocks (dashboard) ────────────────────────────────────── */
   .modes { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
@@ -188,6 +235,9 @@
     color: var(--amber); border: 1px solid var(--amber-dim); border-radius: 999px; padding: .4rem .7rem;
   }
   .count { font: 400 .7rem/1 var(--mono); letter-spacing: .1em; color: var(--paper-dim); }
+  /* Sits with the chips rather than under the question: it is a property of the question,
+     not one of the recording controls below. Hidden until the audio is known to exist. */
+  .hear { margin-left: auto; padding: .4rem .75rem; font-size: .78rem; }
   #question {
     font-family: var(--display); font-weight: 600; letter-spacing: -.025em; line-height: 1.14;
     font-size: clamp(1.35rem, 3.6vw, 2.1rem); margin: 0; text-wrap: balance;
@@ -247,6 +297,39 @@
   .grading { max-width: 34rem; }
   .bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin: 1.5rem 0 .8rem; }
   .bar span { display: block; height: 100%; width: 0; background: var(--amber); border-radius: 3px; transition: width .4s ease-out; }
+
+  /* ── Past interviews: a tape log, one row per take ───────────────── */
+  /* The row reads left to right the way a studio log does: when it was cut, what was on
+     it, how far through the desk it is, what it scored. */
+  .past {
+    background: var(--panel); border: 1px solid var(--seam); border-radius: 12px;
+    padding: .95rem 1.1rem; display: grid; gap: .3rem 1.1rem; align-items: center;
+    grid-template-columns: 1fr auto auto;
+  }
+  .past .when { grid-column: 1; font: 500 .68rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--paper-dim); }
+  .past .what { grid-column: 1; font-size: .95rem; }
+  .past .sc { grid-column: 2; font: 600 1.35rem/1 var(--mono); font-variant-numeric: tabular-nums; }
+  .past .go, .past .key { grid-column: 3; }
+  /* The queue on the level ladder rather than a spinner: the ladder is this page's
+     instrument, and one segment per answer says how far along it actually is. */
+  .queue { grid-column: 1 / -1; display: flex; gap: 3px; height: .5rem; align-items: stretch; margin-top: .35rem; }
+  .queue i { flex: 1; border-radius: 2px; background: var(--seam); min-width: 3px; }
+  .queue i[data-s="graded"] { background: var(--pass); }
+  .queue i[data-s="failed"] { background: var(--live); }
+  /* Never recorded, and the sitting is closed: an outline, so it reads as a gap in the set
+     rather than as work still to come. */
+  .queue i[data-s="missing"] { background: none; box-shadow: inset 0 0 0 1px var(--seam); }
+  /* Only the segment currently being worked breathes, so a polling page reads as live
+     without the whole row flickering. */
+  .queue i[data-s="working"] { background: var(--amber); animation: cueing 1.4s ease-in-out infinite; }
+  @keyframes cueing { 50% { opacity: .2; } }
+  .past .legend { grid-column: 1 / -1; font: 400 .68rem/1.4 var(--mono); letter-spacing: .06em; color: var(--paper-dim); }
+  .past .legend[data-s="partial"] { color: var(--live); }
+  .past .legend[data-s="open"] { color: var(--amber); }
+  @media (max-width: 30rem) {
+    .past { grid-template-columns: 1fr auto; }
+    .past .go, .past .key { grid-column: 1 / -1; justify-self: start; }
+  }
 
   /* ── Report ─────────────────────────────────────────────────────── */
   .report { display: grid; gap: 1.75rem; }
@@ -331,12 +414,13 @@
 <body data-phase="standby">
 <div class="wrap">
   <header class="strip">
-    <span class="mark">The <em>Booth</em></span>
-    <span class="mono-label" id="strip-sub">Interview practice</span>
+    <button class="mark" id="to-home" disabled>Placemint<em>.Academy</em></button>
+    <span class="mono-label" id="strip-sub">Learning | Assessment | Excellence</span>
     <span class="who" id="who" hidden>
       <span class="lamp" id="lamp">Standby</span>
       <span class="name" id="who-name"></span>
       <span class="badge" id="who-badge"></span>
+      <button class="mono-label" id="sign-out" style="background:none;border:0;cursor:pointer">Sign out</button>
     </span>
   </header>
 
@@ -345,21 +429,76 @@
     <h1 class="big">Practise out loud.</h1>
     <p class="lede">Answer real interview questions by speaking. Get them transcribed and graded on completeness, correctness and relevance.</p>
     <form id="login-form">
+      <p class="oops" id="login-oops" hidden></p>
       <div class="field">
-        <label for="candidate">Candidate name</label>
-        <input id="candidate" name="candidate" type="text" autocomplete="name" required placeholder="Adarsh Battu">
+        <label for="login-email">Email</label>
+        <input id="login-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
       </div>
       <div class="field">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="anything">
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
       </div>
-      <button class="key go wide" type="submit">Sign in</button>
-      <p class="hint">Local practice only — the password isn't checked and nothing is stored.</p>
+      <button class="key go wide" type="submit" id="login-go">Sign in</button>
+      <p class="hint">No account yet? <button type="button" data-go="signup">Create one</button></p>
     </form>
   </section>
 
-  <!-- 2. Dashboard ─────────────────────────────────────────────────── -->
+  <!-- 1b. Sign up ──────────────────────────────────────────────────── -->
+  <section class="view gate" id="view-signup" hidden>
+    <h1 class="big">Set up your account.</h1>
+    <p class="lede">Your name goes on the report. Your level sets the bar you're graded against — you can change it before every interview.</p>
+    <form id="signup-form">
+      <p class="oops" id="signup-oops" hidden></p>
+      <div class="field">
+        <label for="signup-name">Your name</label>
+        <input id="signup-name" name="name" type="text" autocomplete="name" required placeholder="Adarsh Battu">
+      </div>
+      <div class="field">
+        <label for="signup-email">Email</label>
+        <input id="signup-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label for="signup-password">Password</label>
+        <input id="signup-password" name="password" type="password" autocomplete="new-password" required minlength="8">
+      </div>
+      <div class="field">
+        <label for="signup-level">Usual level</label>
+        <select id="signup-level" name="level"></select>
+      </div>
+      <button class="key go wide" type="submit" id="signup-go">Create account</button>
+      <p class="hint">Already set up? <button type="button" data-go="login">Sign in</button></p>
+    </form>
+  </section>
+
+  <!-- 2. Home ──────────────────────────────────────────────────────── -->
+  <section class="view" id="view-home" hidden>
+    <h1 class="big" id="home-greeting">Welcome back.</h1>
+    <p class="lede" id="home-lede">Practise out loud, then read the grading back. Everything you've recorded stays here.</p>
+    <div class="bay">
+      <button class="jack" id="jack-learning" disabled aria-describedby="jack-learning-sub">
+        <span class="no">01</span>
+        <span class="lbl">Learning</span>
+        <span class="sub" id="jack-learning-sub">Read the material behind a topic before you're questioned on it. Not built yet.</span>
+        <span class="read">Soon<b>—</b></span>
+      </button>
+      <button class="jack" id="jack-take" aria-describedby="jack-take-sub">
+        <span class="no">02</span>
+        <span class="lbl">Take an assessment</span>
+        <span class="sub" id="jack-take-sub">Pick a topic and a level, answer out loud, submit the set for grading.</span>
+        <span class="read">Questions<b id="jack-take-n">—</b></span>
+      </button>
+      <button class="jack" id="jack-past" aria-describedby="jack-past-sub">
+        <span class="no">03</span>
+        <span class="lbl">Past assessments</span>
+        <span class="sub" id="jack-past-sub">Everything you've started — in progress, still grading, and finished.</span>
+        <span class="read" id="jack-past-read">Sittings<b id="jack-past-n">—</b></span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 2b. Format ───────────────────────────────────────────────────── -->
   <section class="view" id="view-dashboard" hidden>
+    <div class="crumb"><button data-go="home">← Home</button><span class="mono-label">Take an assessment</span></div>
     <h1 class="big">Pick your format.</h1>
     <p class="lede">One is ready now. The other two need a paid tier for live streaming and video.</p>
     <div class="modes">
@@ -384,9 +523,17 @@
     </div>
   </section>
 
+  <!-- 2c. Past assessments ─────────────────────────────────────────── -->
+  <section class="view" id="view-history" hidden>
+    <div class="crumb"><button data-go="home">← Home</button><span class="mono-label">Past assessments</span></div>
+    <h1 class="big">Where you've been.</h1>
+    <p class="lede" id="history-lede">Every assessment you've started, newest first. Grading runs in the background — open one once it's ready.</p>
+    <div id="history-list" aria-live="polite"></div>
+  </section>
+
   <!-- 3. Topic + expertise ─────────────────────────────────────────── -->
   <section class="view" id="view-setup" hidden>
-    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Vocal</span></div>
+    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Vocal assessment</span></div>
     <h1 class="big">What are we practising?</h1>
     <p class="lede">Pick a topic, then set the bar you want to be held to.</p>
 
@@ -428,6 +575,7 @@
           <span class="chip" id="tag">—</span>
           <span class="count" id="count"></span>
           <span class="count" id="level-tag"></span>
+          <button class="ghost hear" id="hear" hidden>▶ Hear it</button>
         </div>
         <p id="question">Loading…</p>
       </div>
@@ -453,8 +601,8 @@
     </div>
 
     <div id="grading" class="grading" hidden aria-live="polite">
-      <h1 class="big">Grading your interview.</h1>
-      <p class="lede">Each answer is transcribed, then graded against the ideal answer at your level. Keep this tab open.</p>
+      <h1 class="big">Sending your answers.</h1>
+      <p class="lede">Each recording is uploaded, then queued for transcription and grading. Once they're all in you can close the tab — the results wait for you.</p>
       <div class="bar"><span id="bar-fill"></span></div>
       <p class="count" id="grading-status">Starting…</p>
     </div>
@@ -463,10 +611,11 @@
   <!-- 5. Report ────────────────────────────────────────────────────── -->
   <section class="view" id="view-report" hidden>
     <div class="crumb no-print">
+      <button id="to-past">← Past assessments</button>
       <button id="again">↻ Practise again</button>
     </div>
     <div class="sheet-head">
-      <div class="t">The Booth — interview report</div>
+      <div class="t">Placemint.Academy — interview report</div>
       <div class="m" id="sheet-meta"></div>
     </div>
     <div class="report" id="report" aria-live="polite"></div>
@@ -482,8 +631,11 @@
   <h3>Submit for evaluation?</h3>
   <p>This ends the interview. Your answers are transcribed and graded, and you can't re-record after this.</p>
   <div class="tally" id="tally"></div>
+  <p id="confirm-leaving" hidden>You're on your way out of the interview. Submitting is the only
+  thing that closes it — leave without submitting and this sitting stays unfinished for good.</p>
   <menu>
     <button class="ghost" id="confirm-cancel" autofocus>Keep practising</button>
+    <button class="ghost" id="abandon" hidden>Leave without submitting</button>
     <button class="key go" id="confirm-go">Submit for evaluation</button>
   </menu>
 </dialog>
@@ -491,7 +643,15 @@
 <script>
 const $ = id => document.getElementById(id);
 const SEGMENTS = 24;
-const VIEWS = ['login', 'dashboard', 'setup', 'interview', 'report'];
+const VIEWS = ['login', 'signup', 'home', 'dashboard', 'history', 'setup', 'interview', 'report'];
+const GATES = ['login', 'signup'];
+// The tagline, shown before you are signed in and on home — where there is no location to
+// report. Every other view replaces it with where you are.
+const TAGLINE = 'Learning | Assessment | Excellence';
+const WHERE = {
+  dashboard: 'Take an assessment', history: 'Past assessments',
+  setup: 'Vocal · free tier', interview: 'Vocal · free tier', report: 'Report',
+};
 const PARAMS = ['completeness', 'correctness', 'relevance'];
 const LEVEL_BLURB = {
   beginner: 'Graded on the core idea in plain language and accurate fundamentals. Missing edge cases and complexity analysis cost you nothing.',
@@ -501,7 +661,7 @@ const LEVEL_BLURB = {
 
 const state = {
   candidate: '', level: 'advanced', levels: [], topic: '',
-  questions: [], takes: [], index: 0,
+  questions: [], takes: [], index: 0, assessment: null,
   rec: null, stream: null, ctx: null, ticker: null,
 };
 
@@ -513,8 +673,12 @@ const words = s => (String(s ?? '').trim().match(/\S+/g) || []).length;
 
 function show(name) {
   VIEWS.forEach(v => $(`view-${v}`).hidden = v !== name);
-  $('who').hidden = name === 'login';
-  $('strip-sub').textContent = name === 'login' ? 'Interview practice' : 'Vocal · free tier';
+  const gate = GATES.includes(name);
+  $('who').hidden = gate;
+  // The wordmark is the way home from anywhere, so it is only inert on the login screen
+  // and on home itself.
+  $('to-home').disabled = gate || name === 'home';
+  $('strip-sub').textContent = WHERE[name] ?? TAGLINE;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -540,32 +704,124 @@ async function get(url) {
   return res.json();
 }
 
+// The server speaks HTTP status + {detail}; surface its message rather than inventing one.
+async function post(url, form) {
+  const res = await fetch(url, { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `${res.status} ${res.statusText}`);
+  return data;
+}
+
 const answered = () => state.takes.filter(Boolean).length;
 
-// ── 1. Login ──────────────────────────────────────────────────────────
-$('login-form').onsubmit = e => {
-  e.preventDefault();
-  const name = $('candidate').value.trim();
-  if (!name) return;
-  state.candidate = name;
-  $('who-name').textContent = name;
-  $('who-badge').textContent = name[0].toUpperCase();
-  show('dashboard');
+// ── 1. Login and sign up ──────────────────────────────────────────────
+function signedIn(profile) {
+  state.candidate = profile.name;
+  state.level = profile.default_level;
+  $('who-name').textContent = profile.name;
+  $('who-badge').textContent = profile.name[0].toUpperCase();
+  openHome();
+}
+
+// Both forms submit the same way; only the endpoint and the error slot differ.
+function wireAuth(view, url) {
+  const form = $(`${view}-form`), oops = $(`${view}-oops`), go = $(`${view}-go`);
+  form.onsubmit = async e => {
+    e.preventDefault();
+    oops.hidden = true;
+    go.disabled = true;
+    try {
+      signedIn(await post(url, new FormData(form)));
+      form.reset();
+    } catch (err) {
+      oops.textContent = err.message;
+      oops.hidden = false;
+    } finally {
+      go.disabled = false;
+    }
+  };
+}
+wireAuth('login', '/login');
+wireAuth('signup', '/signup');
+
+async function signOut() {
+  await fetch('/logout', { method: 'POST' });
+  stopPolling();                                // no fetching another account's history
+  $('history-list').innerHTML = '';
+  $('topics').innerHTML = '';                   // and none of their topic choice either
+  bank = null;                                  // the next account fetches its own bank
+  state.candidate = '';
+  state.topic = '';
+  setPhase('standby');
+  show('login');
+}
+
+$('sign-out').onclick = () => {
+  // Signing out of a live interview would leave the sitting unfinished with no way back to
+  // it, so it asks first. 'login' routes back through here, so abandoning still logs out.
+  if (interviewLive()) return askToSubmit('login');
+  signOut();
 };
 
-// ── 2. Dashboard → setup ──────────────────────────────────────────────
+// ── 2. Home ───────────────────────────────────────────────────────────
+// The one screen with nothing above it, and the only route to the other two. Its readouts
+// are the same /history and /questions the pages below use, so nothing new is fetched to
+// fill them and a stale count cannot disagree with the page it leads to.
+function openHome() {
+  stopPolling();               // home does not show the queue, so nothing here needs a poll
+  $('home-greeting').textContent = `${state.candidate.split(' ')[0]}, what are we doing?`;
+  show('home');
+  countUp();
+}
+
+async function countUp() {
+  const [past, questions] = await Promise.all([
+    get('/history').catch(() => null),
+    loadBank().catch(() => null),
+  ]);
+  $('jack-take-n').textContent = questions ? questions.length : '—';
+  if (!past) return;
+
+  $('jack-past-n').textContent = past.length;
+  // A count of sittings is not the useful number when something is grading — say that
+  // instead, and mark the readout live so the row reads as having news in it.
+  const working = past.reduce((n, s) => n + s.working, 0);
+  const open = past.filter(s => !s.finished_at).length;
+  const read = $('jack-past-read');
+  read.dataset.live = String(!!(working || open));
+  read.firstChild.textContent = working ? 'Grading' : open ? 'In progress' : 'Sittings';
+  $('jack-past-n').textContent = working || open || past.length;
+  $('home-lede').textContent = working
+    ? `${working} answer${working === 1 ? ' is' : 's are'} still being graded.`
+    : open
+      ? `${open} assessment${open === 1 ? '' : 's'} left open. Pick it up, or start a new one.`
+      : 'Practise out loud, then read the grading back. Everything you record stays here.';
+}
+
+$('to-home').onclick = () => leave('home');
+$('jack-take').onclick = () => show('dashboard');
+$('jack-past').onclick = () => openHistory();
+
+// ── 2b. Format → setup ────────────────────────────────────────────────
 let bank = null;   // every question, fetched once
+
+// Shared by the home readout and the setup page, so the bank is fetched once per session
+// however you arrive at it.
+async function loadBank() {
+  return bank ??= await get('/questions');
+}
 
 $('mode-vocal').onclick = async () => {
   show('setup');
-  if (bank) return;
   try {
-    bank = await get('/questions');
-    state.levels = await get('/levels');
+    await loadBank();
   } catch (e) {
     $('topics').innerHTML = `<p class="none">Cannot reach the server: ${escape(e.message)}</p>`;
     return;
   }
+  // Built once, then left alone so a chosen topic and level survive a trip home. Keyed on
+  // what is actually rendered, not on `bank` — the home readout may have loaded that first.
+  if ($('topics').querySelector('.topic')) return;
   buildTopics();
   buildDial();
 };
@@ -607,7 +863,150 @@ function syncDial() {
   $('anchors').querySelectorAll('button').forEach(b => b.setAttribute('aria-current', Number(b.dataset.i) === i));
 }
 
-document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => show(b.dataset.go));
+// leave() rather than show(): the interview's own crumb is a data-go, and walking out of a
+// live sitting through it would leave it unfinished for good.
+document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => leave(b.dataset.go));
+
+// ── 2b. Past interviews ───────────────────────────────────────────────
+// Grading now finishes after the request that submitted it, so this page is where a
+// candidate watches for their results. It polls only while something is outstanding.
+let poll = null;
+
+$('to-past').onclick = () => openHistory();
+
+async function openHistory() {
+  show('history');
+  if (!$('history-list').children.length) $('history-list').innerHTML = '<p class="none">Loading…</p>';
+  await refreshHistory();
+}
+
+async function refreshHistory() {
+  let past;
+  try {
+    past = await get('/history');
+  } catch (e) {
+    stopPolling();
+    $('history-list').innerHTML = `<p class="none">Could not load your interviews: ${escape(e.message)}</p>`;
+    return;
+  }
+  if (!past.length) {
+    stopPolling();
+    $('history-list').innerHTML = '<p class="none">Nothing yet. Take an assessment and it shows up here.</p>';
+    return;
+  }
+  $('history-list').innerHTML = `<div class="items">${past.map(pastRow).join('')}</div>`;
+  $('history-list').querySelectorAll('[data-open]').forEach(b => b.onclick = () => openReport(b.dataset.open));
+
+  // Keep polling only while the worker still owes something, so an idle page is idle.
+  const working = past.reduce((n, s) => n + s.working, 0);
+  const open = past.filter(s => !s.finished_at).length;
+  $('history-lede').textContent = working
+    ? `${working} answer${working === 1 ? '' : 's'} still being graded. This page updates itself — you can also close the tab and come back.`
+    : open
+      ? `${open} assessment${open === 1 ? ' is' : 's are'} still open. Anything you didn't submit is left where it was.`
+      : "Every assessment you've taken, newest first.";
+  working ? startPolling() : stopPolling();
+}
+
+function startPolling() {
+  poll ??= setInterval(() => {
+    // Polling a hidden view would keep fetching behind the candidate's back.
+    if ($('view-history').hidden) return stopPolling();
+    refreshHistory();
+  }, 4000);
+}
+
+function stopPolling() {
+  clearInterval(poll);
+  poll = null;
+}
+
+function pastRow(sitting) {
+  const open = !sitting.finished_at;
+  const stamp = sitting.finished_at ?? sitting.started_at;
+  const when = new Date(`${stamp.replace(' ', 'T')}Z`).toLocaleString();
+  const total = sitting.questions ?? sitting.answered;
+  const score = sitting.overall ?? '—';
+
+  // Counted from the server rather than derived by subtracting the queue: a question that
+  // was never recorded has no answer row and no job, so the arithmetic scored it as graded.
+  const graded = sitting.graded;
+
+  // One segment per question, in the order the desk works through them: what is graded,
+  // what is on the desk now, what is still waiting, what came back broken, what is
+  // untouched. An open sitting's untouched segments are simply not recorded yet.
+  const segment = i => i < graded ? 'graded'
+    : i < graded + sitting.working ? (i === graded ? 'working' : 'waiting')
+    : i < graded + sitting.working + sitting.stuck ? 'failed'
+    : open ? 'waiting' : 'missing';
+  const ladder = Array.from({ length: total }, (_, i) => `<i data-s="${segment(i)}"></i>`).join('');
+
+  const legend = open
+    ? { s: 'open', text: `In progress · ${sitting.answered} of ${total} recorded` }
+    : sitting.working
+      ? { s: 'working', text: `${graded} of ${total} graded · ${sitting.working} on the desk` }
+      : sitting.stuck
+        ? { s: 'partial', text: `${graded} of ${total} graded · ${sitting.stuck} couldn't be graded` }
+        : { s: 'done', text: `${graded} of ${total} graded` };
+
+  // An open sitting has no report to read, and it cannot be resumed either: the questions
+  // and the recordings only ever lived in the tab it was started in.
+  const action = open
+    ? `<button class="ghost" data-open="${sitting.id}">See what's recorded</button>`
+    : `<button class="key${sitting.working ? '' : ' go'}" data-open="${sitting.id}">
+        ${sitting.working ? 'View progress' : 'View report'}</button>`;
+
+  return `<div class="past" data-id="${sitting.id}">
+    <span class="when">${escape(when)}${open ? ' · started' : ''}</span>
+    <span class="what">${escape(sitting.topic || 'Every topic')} · ${escape(sitting.level)}</span>
+    <span class="sc" style="color:${sitting.overall === null ? 'var(--paper-dim)' : tone(score)}">${score}</span>
+    ${action}
+    <span class="queue" aria-hidden="true">${ladder}</span>
+    <span class="legend" data-s="${legend.s}">${escape(legend.text)}</span>
+  </div>`;
+}
+
+// ── 2c. A stored report ───────────────────────────────────────────────
+// Reads the same report screen the interview used, from the database rather than from the
+// responses of a run that just happened — so it survives a reload, and a closed tab.
+async function openReport(id) {
+  stopPolling();
+  show('report');
+  $('report').innerHTML = '<p class="none">Loading…</p>';
+  let sitting;
+  try {
+    sitting = await get(`/assessments/${id}`);
+  } catch (e) {
+    $('report').innerHTML = `<p class="none">Could not load that interview: ${escape(e.message)}</p>`;
+    return;
+  }
+  state.topic = sitting.topic || '';
+  state.level = sitting.level;
+  renderReport(storedResults(sitting), sitting);
+}
+
+// The report screen was written against the shape /submit used to return. Rather than
+// teach it a second shape, map the stored rows onto that one.
+function storedResults(sitting) {
+  const failed = new Map(sitting.jobs.map(j => [j.question_id, j]));
+  const results = sitting.answers.map(a => {
+    const job = failed.get(a.question_id);
+    const question = { id: a.question_id, text: a.text, topic: a.topic };
+    if (a.report) return { question, report: { ...a.report, transcript: a.transcript } };
+    return { question, pending: job?.status !== 'failed', failed: job?.error ?? 'not graded' };
+  });
+  // A take still awaiting transcription has no answer row at all, so it only exists here.
+  const seen = new Set(sitting.answers.map(a => a.question_id));
+  for (const job of sitting.jobs) {
+    if (seen.has(job.question_id)) continue;
+    results.push({
+      question: { id: job.question_id, text: job.text },
+      pending: job.status !== 'failed',
+      failed: job.error ?? 'waiting to be transcribed',
+    });
+  }
+  return results;
+}
 
 // ── 3. Setup → interview ──────────────────────────────────────────────
 $('to-interview').onclick = () => {
@@ -625,7 +1024,19 @@ $('to-interview').onclick = () => {
 };
 
 // ── 4. Interview ──────────────────────────────────────────────────────
-$('start').onclick = () => {
+$('start').onclick = async () => {
+  // Open the sitting first: every answer is filed against it, so a failure here has to
+  // stop the interview rather than silently produce an unsaved one.
+  const body = new FormData();
+  body.append('level', state.level);
+  body.append('questions', state.questions.length);
+  if (state.topic) body.append('topic', state.topic);
+  try {
+    state.assessment = (await post('/assessments', body)).id;
+  } catch (e) {
+    $('pre-lede').textContent = `Could not start the interview: ${e.message}`;
+    return;
+  }
   $('pre').hidden = true;
   $('during').hidden = false;
   setPhase('live');          // the standby lamp goes green: the interview is running
@@ -640,6 +1051,7 @@ function showQuestion() {
   $('question').textContent = q.text;
   $('prev').disabled = state.index === 0;
   $('next').disabled = state.index === state.questions.length - 1;
+  loadSpoken(q.id);
   loadTake();
   buildNav();
   updateFinish();
@@ -665,6 +1077,31 @@ function updateFinish() {
       ? `${total - done} question${total - done === 1 ? " still unrecorded — it'll" : "s still unrecorded — they'll"} score zero.`
       : 'Everything recorded.';
 }
+
+// The spoken question, if the build step has generated it. The button appears only once
+// the audio has loaded: offering to play something that 404s is worse than not offering.
+// Not preloaded for the whole set — most candidates read the question and start talking.
+const spoken = new Audio();
+
+function loadSpoken(id) {
+  const hear = $('hear');
+  hear.hidden = true;
+  spoken.pause();
+  spoken.src = `/questions/${id}/audio`;
+  hear.textContent = '▶ Hear it';
+}
+
+spoken.oncanplay = () => $('hear').hidden = false;
+spoken.onended = () => $('hear').textContent = '▶ Hear it';
+$('hear').onclick = () => {
+  if (spoken.paused) {
+    spoken.play();
+    $('hear').textContent = '❚❚ Pause';
+  } else {
+    spoken.pause();
+    $('hear').textContent = '▶ Hear it';
+  }
+};
 
 // Show whichever take belongs to the current question, if any.
 function loadTake() {
@@ -787,17 +1224,66 @@ $('prev').onclick = () => { state.index--; showQuestion(); };
 $('next').onclick = () => { state.index++; showQuestion(); };
 
 // ── Confirm, then grade the whole interview ───────────────────────────
-$('finish').onclick = () => {
+// `leaving` is where to go if the candidate abandons, or null when they pressed Submit from
+// inside the interview. A sitting is only closed by /finish, so walking away from a live one
+// leaves it unfinished for good — hence the same dialog on the way out, not just at the end.
+let leaving = null;
+
+function askToSubmit(nextView = null) {
+  leaving = nextView;
   const total = state.questions.length, done = answered();
   $('tally').innerHTML = `
     <div><span>Questions</span><span>${total}</span></div>
     <div><span>Recorded</span><span>${done}</span></div>
     ${done < total ? `<div class="warn"><span>Unanswered (score 0)</span><span>${total - done}</span></div>` : ''}
     <div><span>Graded at</span><span>${escape(title(state.level))}</span></div>`;
+  $('confirm-leaving').hidden = !nextView;
+  $('abandon').hidden = !nextView;
+  // Nothing recorded yet: there is nothing to submit, so only the way out is offered.
+  $('confirm-go').hidden = !!nextView && done === 0;
   $('confirm').showModal();
+}
+
+$('finish').onclick = () => askToSubmit();
+
+// True while an opened sitting could still be submitted. `state.assessment` is set by
+// /assessments and cleared once /finish lands, so it is the only thing that says "open".
+const interviewLive = () => state.assessment !== null;
+
+// Home and history need their openers rather than a bare show() — one fills the greeting and
+// the readouts, the other fetches the sittings and starts the poll.
+const OPEN = { home: openHome, history: openHistory, login: signOut };
+const go = view => (OPEN[view] ?? (() => show(view)))();
+
+// Every way out of the interview routes through here rather than each button growing its own
+// check — the wordmark, the crumb, sign-out and every data-go would each need one.
+const leave = view => interviewLive() ? askToSubmit(view) : go(view);
+
+$('confirm-cancel').onclick = () => {
+  leaving = null;
+  $('confirm').close();
 };
 
-$('confirm-cancel').onclick = () => $('confirm').close();
+// Abandoning is deliberate and irreversible, so it is spelled out on the button rather than
+// being what happens when you click away. The takes are dropped: they only ever lived in
+// this tab, and the sitting cannot be written to again from a reload.
+$('abandon').onclick = () => {
+  const next = leaving;
+  $('confirm').close();
+  state.assessment = null;
+  state.takes.forEach(t => t && URL.revokeObjectURL(t.url));
+  state.takes = [];
+  state.questions = [];
+  leaving = null;
+  setPhase('standby');
+  go(next ?? 'dashboard');
+};
+
+// A tab close or a reload cannot be intercepted with a dialog of our own — the browser only
+// allows its own generic prompt, and only if the page asks for it here.
+window.addEventListener('beforeunload', e => {
+  if (interviewLive() && answered()) e.preventDefault();
+});
 
 $('confirm-go').onclick = async () => {
   $('confirm').close();
@@ -807,59 +1293,77 @@ $('confirm-go').onclick = async () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 
   const total = state.questions.length;
-  const results = [];
-  let graded = 0;
+  const takes = state.takes.map((take, i) => ({ take, q: state.questions[i] })).filter(t => t.take);
+  const failures = [];
+  let sent = 0;
 
-  for (let i = 0; i < total; i++) {
-    const q = state.questions[i];
-    $('grading-status').textContent = `Question ${i + 1} of ${total} — ${q.topic}`;
-    const take = state.takes[i];
-    if (!take) {
-      results.push({ question: q, unanswered: true });
-    } else {
-      const body = new FormData();
-      body.append('question_id', q.id);
-      body.append('level', state.level);
-      body.append('audio', take.wav, 'answer.wav');
-      try {
-        const res = await fetch('/submit', { method: 'POST', body });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `${res.status} ${res.statusText}`);
-        results.push({ question: q, report: await res.json() });
-        graded++;
-      } catch (e) {
-        // One bad answer must not lose the rest of the interview.
-        results.push({ question: q, failed: e.message });
-      }
+  for (const [i, { take, q }] of takes.entries()) {
+    $('grading-status').textContent = `Uploading ${i + 1} of ${takes.length} — ${q.topic}`;
+    const body = new FormData();
+    body.append('question_id', q.id);
+    body.append('level', state.level);
+    body.append('audio', take.wav, 'answer.wav');
+    body.append('assessment_id', state.assessment);
+    try {
+      await post('/submit', body);
+      sent++;
+    } catch (e) {
+      failures.push(e.message);   // one bad upload must not lose the rest of the interview
     }
-    $('bar-fill').style.width = `${((i + 1) / total) * 100}%`;
+    $('bar-fill').style.width = `${((i + 1) / takes.length) * 100}%`;
   }
 
   $('grading').hidden = true;
-  if (!graded) {
+  if (!sent) {
+    // Nothing reached the server, so the sitting stays open and a retry files against it.
     $('during').hidden = false;
     setPhase('live');
-    setStatus(`Grading failed for every answer: ${results.find(r => r.failed)?.failed ?? 'unknown error'}. Your recordings are still here — try submitting again.`, 'bad');
+    setStatus(`Could not send your answers: ${failures[0] ?? 'unknown error'}. Your recordings are still here — try submitting again.`, 'bad');
     updateFinish();
     return;
   }
-  renderReport(results);
-  show('report');
+
+  // Closing the sitting is what makes it appear as submitted, so it cannot be skipped.
+  try {
+    await post(`/assessments/${state.assessment}/finish`, new FormData());
+  } catch (e) {
+    $('during').hidden = false;
+    setPhase('live');
+    setStatus(`Your answers were sent but the interview didn't close: ${e.message}. Submit again.`, 'bad');
+    updateFinish();
+    return;
+  }
+
+  state.assessment = null;
+  state.takes.forEach(t => t && URL.revokeObjectURL(t.url));
+  state.takes = [];
+  const missed = total - takes.length;
+  $('history-lede').textContent = 'Submitted. Grading runs in the background — this page updates itself.';
+  await openHistory();
+  if (failures.length || missed) {
+    $('history-lede').textContent = [
+      `${sent} of ${total} answer${total === 1 ? '' : 's'} submitted.`,
+      failures.length ? `${failures.length} could not be sent: ${failures[0]}` : '',
+      missed ? `${missed} was never recorded and scores zero.` : '',
+      'Grading runs in the background.',
+    ].filter(Boolean).join(' ');
+  }
 };
 
 // ── 5. Report ─────────────────────────────────────────────────────────
 const tone = v => v >= 70 ? 'var(--pass)' : v >= 40 ? 'var(--amber)' : 'var(--live)';
 
-function renderReport(results) {
-  // Unanswered counts as zero; a server failure is excluded so a 502 can't
-  // masquerade as a bad answer.
-  const scored = results.filter(r => !r.failed);
-  const overall = Math.round(scored.reduce((s, r) => s + (r.report?.score ?? 0), 0) / scored.length);
+function renderReport(results, sitting) {
+  // Only graded answers count. An ungraded one is either still queued or failed
+  // upstream — neither is the candidate's answer being bad, so neither is a zero.
   const graded = results.filter(r => r.report);
-  const failed = results.filter(r => r.failed);
-  const weights = graded[0].report.weights;
+  const pending = results.filter(r => r.pending);
+  const failed = results.filter(r => r.failed && !r.pending);
+  const overall = sitting.overall ?? 0;
+  const weights = graded[0]?.report.weights ?? {};
 
   const avg = name => Math.round(
-    scored.reduce((s, r) => s + (r.report?.parameters[name].score ?? 0), 0) / scored.length);
+    graded.reduce((s, r) => s + r.report.parameters[name].score, 0) / graded.length);
 
   const read = overall >= 80 ? 'Interview ready' : overall >= 60 ? 'Nearly there'
     : overall >= 35 ? 'Needs another pass' : 'Start this topic over';
@@ -892,8 +1396,8 @@ function renderReport(results) {
         <span class="qt">${escape(r.question.text)}</span>
         <span class="sc" style="color:${colour}">${score}</span></summary>`;
 
-    if (r.unanswered) return `<details class="item">${head('0', 'var(--paper-dim)')}
-      <div class="body"><p class="full">You didn't record an answer to this one, so it scores zero.</p></div></details>`;
+    if (r.pending) return `<details class="item">${head('…', 'var(--amber)')}
+      <div class="body"><p class="full">Still being graded. It joins the average as soon as it lands — reopen this report in a moment.</p></div></details>`;
     if (r.failed) return `<details class="item">${head('—', 'var(--live)')}
       <div class="body"><p class="full">This answer couldn't be graded: ${escape(r.failed)}. It's left out of the overall score.</p></div></details>`;
 
@@ -918,10 +1422,28 @@ function renderReport(results) {
   const allGaps = [...new Set(graded.flatMap(r => r.report.comments.gaps))].slice(0, 6);
   const allWins = [...new Set(graded.flatMap(r => r.report.comments.strengths))].slice(0, 6);
   const allErrors = graded.flatMap(r => r.report.errors);
-  const stamp = new Date().toLocaleString();
+  // An open sitting is reachable from the list too, and it has no finished_at yet.
+  const when = sitting.finished_at ?? sitting.started_at;
+  const stamp = new Date(`${when.replace(' ', 'T')}Z`).toLocaleString();
 
   $('sheet-meta').textContent =
     `${state.candidate} · ${state.topic || 'Every topic'} · ${title(state.level)} · ${stamp}`;
+
+  // Nothing graded yet: the summary would be a page of zeroes and NaNs, so say so instead.
+  if (!graded.length) {
+    const why = !sitting.finished_at
+      ? 'This one was never submitted, so nothing was graded. Anything recorded in it is listed below.'
+      : pending.length
+        ? `${pending.length} answer${pending.length === 1 ? ' is' : 's are'} still in the queue. Come back in a moment.`
+        : `None of your answers could be graded: ${escape(failed[0]?.failed ?? 'unknown error')}`;
+    $('report').innerHTML = `
+      <h1 class="big">${escape(state.candidate)}, this one isn't graded${sitting.finished_at ? ' yet' : ''}.</h1>
+      <p class="lede">${escape(state.topic || 'Every topic')} · ${escape(state.level)} level · ${escape(stamp)}</p>
+      <p class="none">${why}</p>
+      <div><h2>Question by question</h2>
+        <div class="items">${results.map(item).join('')}</div></div>`;
+    return;
+  }
 
   $('report').innerHTML = `
     <h1 class="big">${escape(state.candidate)}, here's how that went.</h1>
@@ -931,7 +1453,7 @@ function renderReport(results) {
     <div class="verdict">
       <span class="num" style="color:${tone(overall)}">${overall}</span><span class="of">/ 100</span>
       <span class="read" style="color:${tone(overall)}">${read}<br>
-        <span class="count">average across ${scored.length} question${scored.length === 1 ? '' : 's'}</span></span>
+        <span class="count">average across ${graded.length} question${graded.length === 1 ? '' : 's'}</span></span>
     </div>
 
     <div><h2>Across the whole interview</h2>
@@ -944,6 +1466,9 @@ function renderReport(results) {
 
     ${allErrors.length ? `<div><h2>Incorrect claims across all answers</h2>
       <ul class="wrong">${allErrors.map(e => `<li>${escape(e)}</li>`).join('')}</ul></div>` : ''}
+
+    ${pending.length ? `<p class="none">${pending.length} answer${pending.length === 1 ? ' is' : 's are'}
+      still being graded, so this average will move.</p>` : ''}
 
     ${failed.length ? `<p class="none">${failed.length} answer${failed.length === 1 ? '' : 's'}
       couldn't be graded and ${failed.length === 1 ? 'is' : 'are'} excluded from the average.</p>` : ''}
@@ -967,8 +1492,19 @@ $('again').onclick = () => {
   show('setup');
 };
 
+// ── Boot ──────────────────────────────────────────────────────────────
 setPhase('standby');
 show('login');
+
+// /levels is open, so the signup dial can be built before anyone has an account.
+get('/levels').then(levels => {
+  state.levels = levels;
+  $('signup-level').innerHTML = levels
+    .map(l => `<option value="${escape(l)}"${l === state.level ? ' selected' : ''}>${escape(title(l))}</option>`).join('');
+});
+
+// A valid cookie skips the login screen. 401 is the normal case, not an error.
+get('/me').then(signedIn, () => {});
 </script>
 </body>
 </html>
