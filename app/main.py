@@ -1,50 +1,123 @@
-"""Mock interview practice API. Speech and scoring both run on the HF Inference API."""
+"""Mock interview practice API. Speech runs on the HF Inference API; see evaluate for the judge."""
 
 import io
-import json
 import logging
-import pathlib
 import time
 
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 
 from app import setup_logging
-from app.evaluate import LEVELS, _client, evaluate
+from app.evaluate import _client, evaluate
+from src.constants.constants import (
+    ASR_MODEL,
+    ASR_OPTIONS,
+    COOKIE_MAX_AGE,
+    COOKIE_NAME,
+    LEVELS,
+    MIN_PASSWORD,
+    MIN_RMS,
+    MIN_SECONDS,
+)
+from src.constants.filepaths import INDEX_HTML
+from src.db import store
+from src.helpers.security import sign, unsign
 
 setup_logging()  # also covers `uvicorn app.main:app`, which never calls run()
 log = logging.getLogger("app.api")
 
-HERE = pathlib.Path(__file__).parent
-QUESTIONS = {q["id"]: q for q in json.loads((HERE / "questions.json").read_text())}
-TOPICS = sorted({q["topic"] for q in QUESTIONS.values()})
-
-# whisper-large-v3 handles Indian English well; pin the language so accented
-# input is never mistaken for another one and silently translated.
-ASR_MODEL = "openai/whisper-large-v3"
-ASR_OPTIONS = {"language": "en", "task": "transcribe"}
+store.setup()  # creates and seeds data/practice.db on first run
 
 app = FastAPI(title="Mock Interview Practice")
 
 
+def current_user(session: str | None = Cookie(None, alias=COOKIE_NAME)) -> dict:
+    """The signed-in user, or 401. Every route below the login screen depends on this."""
+    user_id = unsign(session) if session else None
+    profile = store.profile(user_id) if user_id else None
+    if profile is None:
+        raise HTTPException(401, "Sign in to continue.")
+    return profile
+
+
+def _start_session(response: Response, user_id: int) -> None:
+    # HttpOnly keeps the cookie away from any injected script; SameSite=Lax blocks
+    # cross-site use. secure=True would break http://localhost, so it is left off
+    # here. ponytail: no Secure flag, set it from an env switch when this gets a domain.
+    response.set_cookie(
+        COOKIE_NAME, sign(user_id), max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax"
+    )
+
+
 @app.get("/")
 def index():
-    return FileResponse(HERE / "index.html")
+    return FileResponse(INDEX_HTML)
+
+
+@app.post("/signup", status_code=201)
+def signup(
+    response: Response,
+    email: str = Form(...),
+    name: str = Form(...),
+    password: str = Form(...),
+    level: str = Form("advanced"),
+):
+    """Open signup: anyone can create an account, and it signs them straight in."""
+    if "@" not in email or email.strip() != email.strip().replace(" ", ""):
+        raise HTTPException(422, "Enter a valid email address.")
+    if not name.strip():
+        raise HTTPException(422, "Enter your name.")
+    if len(password) < MIN_PASSWORD:
+        raise HTTPException(422, f"Use at least {MIN_PASSWORD} characters for your password.")
+    if level not in LEVELS:
+        raise HTTPException(422, f"Unknown level {level!r}. Expected one of {sorted(LEVELS)}.")
+
+    user_id = store.create_user(email, name, password, level)
+    if user_id is None:
+        raise HTTPException(409, "That email already has an account. Sign in instead.")
+    _start_session(response, user_id)
+    log.info("signup ok user=%d", user_id)
+    return store.profile(user_id)
+
+
+@app.post("/login")
+def login(response: Response, email: str = Form(...), password: str = Form(...)):
+    user_id = store.authenticate(email, password)
+    if user_id is None:
+        # One message for both causes: a distinct "no such account" reply would let
+        # anyone enumerate which addresses are registered.
+        log.info("login rejected")
+        raise HTTPException(401, "That email and password don't match an account.")
+    _start_session(response, user_id)
+    log.info("login ok user=%d", user_id)
+    return store.profile(user_id)
+
+
+@app.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(COOKIE_NAME, httponly=True, samesite="lax")
+    return {"ok": True}
+
+
+@app.get("/me")
+def me(user: dict = Depends(current_user)):
+    """Who the cookie says you are. The frontend calls this on load to skip the login screen."""
+    return user
 
 
 @app.get("/topics")
-def topics():
-    return TOPICS
+def topics(user: dict = Depends(current_user)):
+    return store.topics()
 
 
 @app.get("/questions")
-def questions(topic: str | None = None):
-    picked = [q for q in QUESTIONS.values() if topic in (None, q["topic"])]
+def questions(topic: str | None = None, user: dict = Depends(current_user)):
+    picked = store.questions(topic)
     if not picked:
-        raise HTTPException(404, f"Unknown topic {topic!r}. Available: {TOPICS}")
-    return [{"id": q["id"], "topic": q["topic"], "text": q["text"]} for q in picked]
+        raise HTTPException(404, f"Unknown topic {topic!r}. Available: {store.topics()}")
+    return picked
 
 
 @app.get("/levels")
@@ -57,8 +130,9 @@ async def submit(
     question_id: str = Form(...),
     audio: UploadFile = File(...),
     level: str = Form("advanced"),
+    user: dict = Depends(current_user),
 ):
-    question = QUESTIONS.get(question_id)
+    question = store.question(question_id)
     if question is None:
         log.warning("submit rejected: unknown question_id %r", question_id)
         raise HTTPException(404, f"Unknown question_id {question_id!r}")
@@ -80,7 +154,7 @@ async def submit(
 
     # Whisper hallucinates fluent text ("Thank you very much...") from silence, so
     # never send it a dead recording. ponytail: flat RMS gate, no VAD.
-    if len(mono) < rate or float(np.sqrt(np.mean(mono**2))) < 0.005:
+    if seconds < MIN_SECONDS or float(np.sqrt(np.mean(mono**2))) < MIN_RMS:
         log.info("submit %s: silence gate tripped, skipping ASR", question_id)
         return evaluate("", question["text"], question["ideal_answer"], level)
 

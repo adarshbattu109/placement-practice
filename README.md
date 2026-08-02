@@ -11,12 +11,21 @@ whole thing installs in seconds and runs on a laptop.
 
 ```bash
 uv sync
-cp .env.example .env.local     # then paste in your HF_TOKEN
+cp .env.example .env.local     # then fill in HF_TOKEN and SECRET_KEY
 uv run practice
 ```
 
-Open <http://localhost:8000>, log in with any name and password, pick **Vocal**, choose a
-topic and level, and start answering.
+Open <http://localhost:8000>, **create an account**, pick **Vocal**, choose a topic and
+level, and start answering. Signup is open to anyone who can reach the server.
+
+`SECRET_KEY` signs the session cookie and has no default — generate one with:
+
+```bash
+python -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+Changing it later logs everyone out. Accounts and the question bank live in
+`data/practice.db`, created and seeded on first run.
 
 ### Getting an HF token
 
@@ -110,18 +119,31 @@ return HTTP 402 once the monthly credit is exhausted, and the allowance resets m
 app/
   __init__.py      entrypoint (uv run practice), TLS trust store, .env, logging
   main.py          FastAPI app and routes
-  evaluate.py      the grader — levels, weights, judge prompt, parsing
+  evaluate.py      the grader — judge prompt, parsing, weighting
   index.html       the entire frontend, one file, no build step
-  questions.json   21 questions across 6 topics
-poc_mic.py         standalone mic → transcript check, outside the web app
+src/
+  constants/       models, levels and weights, thresholds, every filepath
+  helpers/         security.py — scrypt passwords, hmac session cookies
+  db/              schema.sql and store.py, the only file containing SQL
+data/
+  questions.json   21 questions across 6 topics — the seed for a fresh database
+  practice.db      accounts and the live question bank (gitignored)
+tests/             the pre-push suite: uv run python -m tests
 logs/              rotating server.log (gitignored)
 ```
 
 ## API
 
+Everything except `GET /`, `POST /signup`, `POST /login` and `GET /levels` needs a session
+cookie and returns 401 without one.
+
 | Route | Purpose |
 |-------|---------|
 | `GET /` | The app |
+| `POST /signup` | Multipart: `email`, `name`, `password`, `level` → profile, signs you in |
+| `POST /login` | Multipart: `email`, `password` → profile |
+| `POST /logout` | Clears the session cookie |
+| `GET /me` | The signed-in profile, or 401 |
 | `GET /topics` | Available topics |
 | `GET /questions?topic=` | Questions, optionally filtered |
 | `GET /levels` | `["beginner", "advanced", "expert"]` |
@@ -167,17 +189,30 @@ machine with a TLS-intercepting proxy — even though `curl` works. Don't remove
 ```bash
 say -o /tmp/a.aiff "a hash map hashes the key to a bucket index"
 afconvert -f WAVE -d LEI16@16000 -c 1 /tmp/a.aiff /tmp/a.wav
-curl -F question_id=dsa-1 -F level=advanced -F audio=@/tmp/a.wav http://localhost:8000/submit
+curl -c /tmp/jar -F email=me@example.com -F name=Me -F password=devpassword \
+  http://localhost:8000/signup
+curl -b /tmp/jar -F question_id=dsa-1 -F level=advanced -F audio=@/tmp/a.wav \
+  http://localhost:8000/submit
 ```
+
+### Running the checks
+
+```bash
+uv run python -m tests          # everything: self-checks, routes, frontend, packaging
+uv run python -m tests api      # one check by name
+```
+
+No test touches the network, so none of them need `HF_TOKEN`.
 
 ## Known limits
 
-- **Login is a placeholder.** Any password works, nothing is stored server-side. Don't expose
-  this server to an untrusted network — see [SECURITY.md](SECURITY.md).
 - **Scores aren't reproducible.** The judge runs at `temperature=0.2`, so the same answer
   varies by a few points between runs.
 - **No retry on judge failure.** A transient 502 from the provider loses that recording.
-- **Nothing is persisted.** Close the tab and the report is gone.
+- **Reports aren't persisted.** Accounts are, but close the tab and the report is gone.
+- **No password reset,** and no way to revoke one session — rotating `SECRET_KEY` signs
+  everyone out at once. Don't expose this server to an untrusted network; see
+  [SECURITY.md](SECURITY.md).
 - **Audio leaves your machine.** Recordings go to the HuggingFace Inference API for
   transcription. Don't speak anything confidential.
 

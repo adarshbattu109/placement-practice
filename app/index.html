@@ -76,12 +76,21 @@
   .gate { max-width: 24rem; margin: clamp(2rem, 10vh, 6rem) auto 0; }
   .field { display: grid; gap: .4rem; margin-bottom: 1rem; }
   .field label { font: 500 .7rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--paper-dim); }
-  input[type=text], input[type=password] {
+  input[type=text], input[type=password], input[type=email], select {
     font: inherit; color: var(--paper); background: var(--panel); border: 1px solid var(--seam);
     border-radius: 10px; padding: .7rem .9rem; width: 100%;
   }
-  input:focus { border-color: var(--amber); outline: none; }
+  input:focus, select:focus { border-color: var(--amber); outline: none; }
   .hint { font-size: .8rem; color: var(--paper-dim); margin: 1rem 0 0; }
+  .hint button {
+    background: none; border: 0; padding: 0; color: var(--amber); cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .oops {
+    font-size: .85rem; color: var(--live); margin: 0 0 1rem;
+    border-left: 2px solid var(--live); padding-left: .7rem;
+  }
+  .oops[hidden] { display: none; }
 
   /* ── Mode blocks (dashboard) ────────────────────────────────────── */
   .modes { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
@@ -337,6 +346,7 @@
       <span class="lamp" id="lamp">Standby</span>
       <span class="name" id="who-name"></span>
       <span class="badge" id="who-badge"></span>
+      <button class="mono-label" id="sign-out" style="background:none;border:0;cursor:pointer">Sign out</button>
     </span>
   </header>
 
@@ -345,16 +355,44 @@
     <h1 class="big">Practise out loud.</h1>
     <p class="lede">Answer real interview questions by speaking. Get them transcribed and graded on completeness, correctness and relevance.</p>
     <form id="login-form">
+      <p class="oops" id="login-oops" hidden></p>
       <div class="field">
-        <label for="candidate">Candidate name</label>
-        <input id="candidate" name="candidate" type="text" autocomplete="name" required placeholder="Adarsh Battu">
+        <label for="login-email">Email</label>
+        <input id="login-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
       </div>
       <div class="field">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="anything">
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
       </div>
-      <button class="key go wide" type="submit">Sign in</button>
-      <p class="hint">Local practice only — the password isn't checked and nothing is stored.</p>
+      <button class="key go wide" type="submit" id="login-go">Sign in</button>
+      <p class="hint">No account yet? <button type="button" data-go="signup">Create one</button></p>
+    </form>
+  </section>
+
+  <!-- 1b. Sign up ──────────────────────────────────────────────────── -->
+  <section class="view gate" id="view-signup" hidden>
+    <h1 class="big">Set up your booth.</h1>
+    <p class="lede">Your name goes on the report. Your level sets the bar you're graded against — you can change it before every interview.</p>
+    <form id="signup-form">
+      <p class="oops" id="signup-oops" hidden></p>
+      <div class="field">
+        <label for="signup-name">Your name</label>
+        <input id="signup-name" name="name" type="text" autocomplete="name" required placeholder="Adarsh Battu">
+      </div>
+      <div class="field">
+        <label for="signup-email">Email</label>
+        <input id="signup-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label for="signup-password">Password</label>
+        <input id="signup-password" name="password" type="password" autocomplete="new-password" required minlength="8">
+      </div>
+      <div class="field">
+        <label for="signup-level">Usual level</label>
+        <select id="signup-level" name="level"></select>
+      </div>
+      <button class="key go wide" type="submit" id="signup-go">Create account</button>
+      <p class="hint">Already set up? <button type="button" data-go="login">Sign in</button></p>
     </form>
   </section>
 
@@ -491,7 +529,8 @@
 <script>
 const $ = id => document.getElementById(id);
 const SEGMENTS = 24;
-const VIEWS = ['login', 'dashboard', 'setup', 'interview', 'report'];
+const VIEWS = ['login', 'signup', 'dashboard', 'setup', 'interview', 'report'];
+const GATES = ['login', 'signup'];
 const PARAMS = ['completeness', 'correctness', 'relevance'];
 const LEVEL_BLURB = {
   beginner: 'Graded on the core idea in plain language and accurate fundamentals. Missing edge cases and complexity analysis cost you nothing.',
@@ -513,8 +552,9 @@ const words = s => (String(s ?? '').trim().match(/\S+/g) || []).length;
 
 function show(name) {
   VIEWS.forEach(v => $(`view-${v}`).hidden = v !== name);
-  $('who').hidden = name === 'login';
-  $('strip-sub').textContent = name === 'login' ? 'Interview practice' : 'Vocal · free tier';
+  const gate = GATES.includes(name);
+  $('who').hidden = gate;
+  $('strip-sub').textContent = gate ? 'Interview practice' : 'Vocal · free tier';
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -540,17 +580,52 @@ async function get(url) {
   return res.json();
 }
 
+// The server speaks HTTP status + {detail}; surface its message rather than inventing one.
+async function post(url, form) {
+  const res = await fetch(url, { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `${res.status} ${res.statusText}`);
+  return data;
+}
+
 const answered = () => state.takes.filter(Boolean).length;
 
-// ── 1. Login ──────────────────────────────────────────────────────────
-$('login-form').onsubmit = e => {
-  e.preventDefault();
-  const name = $('candidate').value.trim();
-  if (!name) return;
-  state.candidate = name;
-  $('who-name').textContent = name;
-  $('who-badge').textContent = name[0].toUpperCase();
+// ── 1. Login and sign up ──────────────────────────────────────────────
+function signedIn(profile) {
+  state.candidate = profile.name;
+  state.level = profile.default_level;
+  $('who-name').textContent = profile.name;
+  $('who-badge').textContent = profile.name[0].toUpperCase();
   show('dashboard');
+}
+
+// Both forms submit the same way; only the endpoint and the error slot differ.
+function wireAuth(view, url) {
+  const form = $(`${view}-form`), oops = $(`${view}-oops`), go = $(`${view}-go`);
+  form.onsubmit = async e => {
+    e.preventDefault();
+    oops.hidden = true;
+    go.disabled = true;
+    try {
+      signedIn(await post(url, new FormData(form)));
+      form.reset();
+    } catch (err) {
+      oops.textContent = err.message;
+      oops.hidden = false;
+    } finally {
+      go.disabled = false;
+    }
+  };
+}
+wireAuth('login', '/login');
+wireAuth('signup', '/signup');
+
+$('sign-out').onclick = async () => {
+  await fetch('/logout', { method: 'POST' });
+  bank = null;                                  // the next account fetches its own bank
+  state.candidate = '';
+  setPhase('standby');
+  show('login');
 };
 
 // ── 2. Dashboard → setup ──────────────────────────────────────────────
@@ -561,7 +636,6 @@ $('mode-vocal').onclick = async () => {
   if (bank) return;
   try {
     bank = await get('/questions');
-    state.levels = await get('/levels');
   } catch (e) {
     $('topics').innerHTML = `<p class="none">Cannot reach the server: ${escape(e.message)}</p>`;
     return;
@@ -967,8 +1041,19 @@ $('again').onclick = () => {
   show('setup');
 };
 
+// ── Boot ──────────────────────────────────────────────────────────────
 setPhase('standby');
 show('login');
+
+// /levels is open, so the signup dial can be built before anyone has an account.
+get('/levels').then(levels => {
+  state.levels = levels;
+  $('signup-level').innerHTML = levels
+    .map(l => `<option value="${escape(l)}"${l === state.level ? ' selected' : ''}>${escape(title(l))}</option>`).join('');
+});
+
+// A valid cookie skips the login screen. 401 is the normal case, not an error.
+get('/me').then(signedIn, () => {});
 </script>
 </body>
 </html>

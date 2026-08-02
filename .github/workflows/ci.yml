@@ -34,8 +34,11 @@ jobs:
         with:
           python-version: "3.14"
       - run: uv sync
-      # The self-check stubs the remote judge, so it needs no HF_TOKEN.
-      - run: uv run python -m app.evaluate
+      # No test reaches the network — the judge is stubbed and the only ASR path
+      # exercised is the silence gate, which short-circuits before the API call.
+      - run: uv run python -m tests
+        env:
+          SECRET_KEY: ci-only-cookie-key
 
   security:
     runs-on: ubuntu-latest
