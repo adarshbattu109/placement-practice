@@ -44,6 +44,14 @@ def check():
         f"the frontend calls routes the server does not serve: {called - served}"
     )
 
+    # Templated urls (`/assessments/${id}/finish`) miss the check above, which is exactly
+    # where a typo hides. Compare shapes: the interpolation stands in for one path param.
+    shapes = {tuple("{}" if "{" in s else s for s in path.split("/")) for path in served}
+    for url in set(re.findall(r"(?:get|post|fetch)\(\s*`(/[^`?]+)", html)):
+        shape = tuple("{}" if "$" in s else s for s in url.split("/"))
+        assert shape in shapes, f"the frontend calls `{url}`, which the server does not serve"
+        called.add(url)
+
     # The cosmetic V1 gate claimed nothing was stored. It is now, so the claim must be gone.
     assert "isn't checked and nothing is stored" not in html, (
         "stale login hint still promises no storage"

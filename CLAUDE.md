@@ -85,6 +85,17 @@ FastAPI or knows an HTTP request exists. Never the reverse.
   account" would let anyone enumerate registered addresses.
 - **SQLite with WAL and STRICT.** `foreign_keys` is off by default in SQLite, so `connect()`
   turns it on — the `ON DELETE CASCADE`s in `schema.sql` are inert without it.
+- **A sitting is opened before the first answer, closed after the last.** `POST /assessments`
+  returns an id the browser threads through every `/submit`; `finish` averages the graded
+  answers into `overall`. `finished_at IS NULL` is what makes a sitting writable, so
+  `owns_assessment()` is the ownership *and* the open check, and `/submit` calls it before
+  the ASR spend. `overall` and `finished_at` stay NULL until finish, so an abandoned sitting
+  reads differently from a zero. `assessment_id` is optional — a `curl` submit still grades.
+- **An ungraded answer is not a zero.** `finish_assessment()` averages `WHERE score IS NOT
+  NULL`: a 502 from the judge is not the candidate's fault. Unanswered questions never reach
+  `answers` at all. Only the browser's report screen counts an unrecorded answer as zero.
+- **One row per question per sitting.** `UNIQUE (assessment_id, question_id)` plus an upsert,
+  so a re-recorded answer replaces the take instead of being averaged in twice.
 
 ## Testing
 
@@ -95,7 +106,9 @@ Non-trivial logic leaves one runnable check behind, and everything runs from one
   rather than building a per-function suite.
 - `tests/test_api.py` — every route through a `TestClient` against a temp database.
 - `tests/test_frontend.py` — `index.html` has no build step, so a mistyped `$('id')` fails
-  silently. This walks every id and every fetched route and checks they exist.
+  silently. This walks every id and every fetched route and checks they exist. Templated urls
+  (`` `/assessments/${id}/finish` ``) are checked by shape, with the interpolation standing in
+  for one path parameter.
 - `tests/test_packaging.py` — builds the wheel and asserts it ships `questions.json`,
   `schema.sql` and `index.html`, and no local database.
 

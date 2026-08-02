@@ -32,9 +32,10 @@ a third-party inference API. We take the following seriously:
 - **`SECRET_KEY` is a signing key** — it lives in the same gitignored `.env.local` and has no
   default, because a guessable key lets anyone forge a session cookie for any account.
   Rotating it invalidates every existing session.
-- **`data/practice.db` holds real accounts** — email addresses and scrypt password hashes.
-  It is gitignored, and `tests/test_packaging.py` fails the build if it reaches a wheel.
-  Don't attach it to an issue.
+- **`data/practice.db` holds real accounts and past transcripts** — email addresses, scrypt
+  password hashes, and every answer a candidate has given. It is gitignored, and
+  `tests/test_packaging.py` fails the build if it reaches a wheel. Don't attach it to an issue.
+  Deleting a user cascades to their answers.
 - **Audio and transcripts leave the machine** — recorded answers are uploaded to the
   HuggingFace Inference API for transcription and grading. Do not speak credentials,
   personal data or anything confidential into an answer.
@@ -52,8 +53,8 @@ a third-party inference API. We take the following seriously:
 
 ## Non-Goals
 
-- placement-practice does not rate-limit login, verify email addresses, reset passwords, or
-  persist reports. It is a local practice tool, not a proctored assessment platform.
+- placement-practice does not rate-limit login, verify email addresses or reset passwords. It
+  is a local practice tool, not a proctored assessment platform.
 - placement-practice does not guarantee the confidentiality of audio or transcripts once
   they reach the inference provider — that is governed by the provider's terms.
 - Scores come from an LLM judge at non-zero temperature and are not reproducible or

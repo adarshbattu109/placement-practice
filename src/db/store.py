@@ -141,6 +141,122 @@ def profile(user_id, path=None):
     return dict(row) if row else None
 
 
+# --- assessments --------------------------------------------------------------------
+
+
+def start_assessment(user_id, topic, level, questions, path=None):
+    """Open a sitting and return its id. `topic` is None for every topic."""
+    if level not in LEVELS:
+        raise ValueError(f"Unknown level {level!r}. Expected one of {sorted(LEVELS)}.")
+    with connect(path) as conn:
+        return conn.execute(
+            "INSERT INTO assessments(user_id, topic, level, questions) VALUES (?, ?, ?, ?)",
+            (user_id, topic, level, questions),
+        ).lastrowid
+
+
+def owns_assessment(user_id, assessment_id, path=None):
+    """Whether this sitting belongs to this user, and is still open.
+
+    Every write path checks this. Without it, passing someone else's assessment_id would
+    file answers against their interview.
+    """
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM assessments WHERE id = ? AND user_id = ? AND finished_at IS NULL",
+            (assessment_id, user_id),
+        ).fetchone()
+    return row is not None
+
+
+def save_answer(assessment_id, question_id, transcript, seconds, report=None, path=None):
+    """Record one answer, replacing any earlier take of the same question."""
+    with connect(path) as conn:
+        return conn.execute(
+            "INSERT INTO answers(assessment_id, question_id, transcript, seconds, report, score) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(assessment_id, question_id) DO UPDATE SET "
+            "  transcript = excluded.transcript, seconds = excluded.seconds,"
+            "  report = excluded.report, score = excluded.score,"
+            "  created_at = datetime('now')",
+            (
+                assessment_id,
+                question_id,
+                transcript,
+                seconds,
+                json.dumps(report) if report is not None else None,
+                (report or {}).get("score"),
+            ),
+        ).lastrowid
+
+
+def finish_assessment(assessment_id, path=None):
+    """Close a sitting, averaging its graded answers into `overall`. Returns that average.
+
+    Ungraded answers are excluded from the average rather than counted as zero: a 502 from
+    the judge is not the candidate's fault. Unanswered questions never reach `answers`.
+    """
+    with connect(path) as conn:
+        conn.execute(
+            "UPDATE assessments SET finished_at = datetime('now'),"
+            "  overall = (SELECT round(avg(score)) FROM answers"
+            "             WHERE assessment_id = ? AND score IS NOT NULL)"
+            " WHERE id = ? AND finished_at IS NULL",
+            (assessment_id, assessment_id),
+        )
+        row = conn.execute(
+            "SELECT overall FROM assessments WHERE id = ?", (assessment_id,)
+        ).fetchone()
+    return row["overall"] if row else None
+
+
+def history(user_id, limit=20, path=None):
+    """A user's finished sittings, newest first, for the history page."""
+    with connect(path) as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                "SELECT a.id, a.topic, a.level, a.questions, a.overall, a.started_at,"
+                "       a.finished_at, count(n.id) AS answered"
+                " FROM assessments a LEFT JOIN answers n ON n.assessment_id = a.id"
+                " WHERE a.user_id = ? AND a.finished_at IS NOT NULL"
+                " GROUP BY a.id ORDER BY a.started_at DESC LIMIT ?",
+                (user_id, limit),
+            )
+        ]
+
+
+def assessment(user_id, assessment_id, path=None):
+    """One past sitting with every answer, or None if it is not this user's.
+
+    Scoped by user_id in the query rather than checked afterwards, so a wrong id cannot
+    read another candidate's transcripts.
+    """
+    with connect(path) as conn:
+        head = conn.execute(
+            "SELECT id, topic, level, questions, overall, started_at, finished_at"
+            " FROM assessments WHERE id = ? AND user_id = ?",
+            (assessment_id, user_id),
+        ).fetchone()
+        if head is None:
+            return None
+        answers = conn.execute(
+            "SELECT n.question_id, q.text, t.name AS topic, n.transcript, n.report, n.score,"
+            "       n.seconds"
+            " FROM answers n JOIN questions q ON q.id = n.question_id"
+            " JOIN topics t ON t.id = q.topic_id"
+            " WHERE n.assessment_id = ? ORDER BY n.id",
+            (assessment_id,),
+        ).fetchall()
+
+    return dict(head) | {
+        "answers": [
+            dict(row) | {"report": json.loads(row["report"]) if row["report"] else None}
+            for row in answers
+        ]
+    }
+
+
 def demo():
     """Self-check against a throwaway database: seeding, signup, login, isolation."""
     import os
@@ -184,7 +300,57 @@ def demo():
         except ValueError:
             pass
 
-    print(f"ok — {len(bank)} questions seeded, signup/login round-trips, duplicates rejected")
+        _check_assessments(db, uid)
+
+    print(
+        f"ok — {len(bank)} questions seeded, signup/login round-trips, duplicates rejected, "
+        "assessments persist and stay per-user"
+    )
+
+
+def _check_assessments(db, uid):
+    """A whole sitting, end to end, plus the two ways it must not leak or double-count."""
+    qs = questions(path=db)[:3]
+    sitting = start_assessment(uid, "DSA", "expert", len(qs), path=db)
+    assert owns_assessment(uid, sitting, path=db)
+
+    verdict = {"score": 80, "parameters": {}, "comments": {"strengths": ["clear"]}}
+    save_answer(sitting, qs[0]["id"], "first go", 30.0, verdict, path=db)
+    save_answer(sitting, qs[1]["id"], "second", 25.0, {**verdict, "score": 60}, path=db)
+    # Ungraded (the judge failed): stored, but must not drag the average down.
+    save_answer(sitting, qs[2]["id"], "third", 10.0, None, path=db)
+
+    # Re-recording replaces the take rather than adding a second row.
+    save_answer(sitting, qs[0]["id"], "better answer", 40.0, {**verdict, "score": 90}, path=db)
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) c FROM answers").fetchone()["c"] == 3
+
+    assert finish_assessment(sitting, path=db) == 75, "avg(90, 60), ignoring the ungraded one"
+    assert not owns_assessment(uid, sitting, path=db), "a finished sitting is closed to writes"
+    # Finishing twice must not move the score.
+    assert finish_assessment(sitting, path=db) == 75
+
+    past = history(uid, path=db)
+    assert len(past) == 1 and past[0]["overall"] == 75 and past[0]["answered"] == 3, past
+    assert past[0]["topic"] == "DSA" and past[0]["questions"] == 3
+
+    full = assessment(uid, sitting, path=db)
+    assert len(full["answers"]) == 3
+    first = next(a for a in full["answers"] if a["question_id"] == qs[0]["id"])
+    assert first["transcript"] == "better answer" and first["score"] == 90
+    assert first["report"]["comments"]["strengths"] == ["clear"], "report round-trips as JSON"
+    assert next(a for a in full["answers"] if a["score"] is None)["report"] is None
+    assert full["answers"][0]["text"], "the question text comes back for the report page"
+
+    # An open sitting is not history yet, and another user cannot read either one.
+    open_sitting = start_assessment(uid, None, "beginner", 5, path=db)
+    assert len(history(uid, path=db)) == 1, "an unfinished sitting must not appear in history"
+    assert assessment(uid, open_sitting, path=db)["topic"] is None  # every topic
+
+    other = create_user("bob@example.com", "Bob", "x" * 12, path=db)
+    assert assessment(other, sitting, path=db) is None, "one user must not read another's answers"
+    assert not owns_assessment(other, open_sitting, path=db), "nor write to their sitting"
+    assert history(other, path=db) == []
 
 
 if __name__ == "__main__":

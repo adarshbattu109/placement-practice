@@ -2,6 +2,7 @@
 
 import io
 import logging
+import sqlite3
 import time
 
 import numpy as np
@@ -125,11 +126,63 @@ def levels():
     return list(LEVELS)
 
 
+@app.post("/assessments", status_code=201)
+def open_assessment(
+    level: str = Form(...),
+    questions: int = Form(...),
+    topic: str | None = Form(None),
+    user: dict = Depends(current_user),
+):
+    """Open a sitting. The browser calls this when the candidate starts an interview."""
+    if level not in LEVELS:
+        raise HTTPException(422, f"Unknown level {level!r}. Expected one of {sorted(LEVELS)}.")
+    # An empty topic field means every topic, which is stored as NULL.
+    topic = topic or None
+    if topic is not None and topic not in store.topics():
+        raise HTTPException(404, f"Unknown topic {topic!r}")
+
+    assessment_id = store.start_assessment(user["id"], topic, level, questions)
+    log.info(
+        "assessment %d opened user=%d topic=%s level=%s n=%d",
+        assessment_id,
+        user["id"],
+        topic or "*",
+        level,
+        questions,
+    )
+    return {"id": assessment_id}
+
+
+@app.post("/assessments/{assessment_id}/finish")
+def close_assessment(assessment_id: int, user: dict = Depends(current_user)):
+    """Close a sitting and return its average. Idempotent — a re-finish returns the same."""
+    if store.assessment(user["id"], assessment_id) is None:
+        raise HTTPException(404, "No such assessment.")
+    overall = store.finish_assessment(assessment_id)
+    log.info("assessment %d finished user=%d overall=%s", assessment_id, user["id"], overall)
+    return {"id": assessment_id, "overall": overall}
+
+
+@app.get("/history")
+def past_assessments(user: dict = Depends(current_user)):
+    return store.history(user["id"])
+
+
+@app.get("/assessments/{assessment_id}")
+def one_assessment(assessment_id: int, user: dict = Depends(current_user)):
+    """A past sitting with every answer. Scoped to the caller — 404 for anyone else's."""
+    past = store.assessment(user["id"], assessment_id)
+    if past is None:
+        raise HTTPException(404, "No such assessment.")
+    return past
+
+
 @app.post("/submit")
 async def submit(
     question_id: str = Form(...),
     audio: UploadFile = File(...),
     level: str = Form("advanced"),
+    assessment_id: int | None = Form(None),
     user: dict = Depends(current_user),
 ):
     question = store.question(question_id)
@@ -139,6 +192,13 @@ async def submit(
     if level not in LEVELS:
         log.warning("submit rejected: unknown level %r", level)
         raise HTTPException(422, f"Unknown level {level!r}. Expected one of {sorted(LEVELS)}.")
+    # Checked before the expensive work: an answer filed against someone else's sitting,
+    # or a closed one, must fail before it costs an ASR call.
+    if assessment_id is not None and not store.owns_assessment(user["id"], assessment_id):
+        log.warning(
+            "submit rejected: user %d cannot write to assessment %s", user["id"], assessment_id
+        )
+        raise HTTPException(404, "No such open assessment.")
 
     raw = await audio.read()
     try:
@@ -156,7 +216,9 @@ async def submit(
     # never send it a dead recording. ponytail: flat RMS gate, no VAD.
     if seconds < MIN_SECONDS or float(np.sqrt(np.mean(mono**2))) < MIN_RMS:
         log.info("submit %s: silence gate tripped, skipping ASR", question_id)
-        return evaluate("", question["text"], question["ideal_answer"], level)
+        report = evaluate("", question["text"], question["ideal_answer"], level)
+        _persist(assessment_id, question_id, "", seconds, report)
+        return report
 
     try:
         started = time.perf_counter()
@@ -175,7 +237,10 @@ async def submit(
         started = time.perf_counter()
         report = evaluate(transcript, question["text"], question["ideal_answer"], level)
     except Exception as e:
+        # Save the transcript even though grading failed. It is the expensive half — ASR
+        # already ran — and slice 4's worker retries from stored text, not from audio.
         log.exception("grading failed for %s", question_id)
+        _persist(assessment_id, question_id, transcript, seconds, None)
         raise HTTPException(502, f"Scoring failed: {e}") from e
 
     log.info(
@@ -186,4 +251,20 @@ async def submit(
         report["score"],
         {p: v["score"] for p, v in report["parameters"].items()},
     )
+    _persist(assessment_id, question_id, transcript, seconds, report)
     return report
+
+
+def _persist(assessment_id, question_id, transcript, seconds, report):
+    """Store one answer, if this submission belongs to a sitting.
+
+    assessment_id is optional so `curl -F question_id=... /submit` still works for a
+    one-off check. A storage failure must not lose a report the candidate is waiting on,
+    so it is logged and swallowed rather than turned into a 502.
+    """
+    if assessment_id is None:
+        return
+    try:
+        store.save_answer(assessment_id, question_id, transcript, seconds, report)
+    except sqlite3.Error:
+        log.exception("could not save answer for %s in assessment %s", question_id, assessment_id)

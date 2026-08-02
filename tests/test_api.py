@@ -12,7 +12,7 @@ import tempfile
 import wave
 
 SILENCE_SECONDS = 2
-GATED = ("/me", "/topics", "/questions")
+GATED = ("/me", "/topics", "/questions", "/history", "/assessments/1")
 
 
 def _silent_wav(seconds=SILENCE_SECONDS, rate=16000):
@@ -149,6 +149,64 @@ def _check_submit(client):
     )
 
 
+def _check_assessments(client):
+    """A sitting from open to finish, then the two ways it must not leak."""
+    silence = ("a.wav", _silent_wav(), "audio/wav")
+    assert client.get("/history").json() == [], "a new account has no history"
+
+    opened = {"level": "beginner", "questions": 2, "topic": "DSA"}
+    assert client.post("/assessments", data=opened | {"level": "guru"}).status_code == 422
+    assert client.post("/assessments", data=opened | {"topic": "Nope"}).status_code == 404
+    res = client.post("/assessments", data=opened)
+    assert res.status_code == 201, res.text
+    sitting = res.json()["id"]
+
+    for question_id in ("dsa-1", "dsa-2"):
+        body = {"question_id": question_id, "level": "beginner", "assessment_id": sitting}
+        assert client.post("/submit", data=body, files={"audio": silence}).status_code == 200
+
+    # An open sitting is not history yet, but its answers are already readable.
+    assert client.get("/history").json() == []
+    live = client.get(f"/assessments/{sitting}").json()
+    assert len(live["answers"]) == 2 and live["overall"] is None, live
+    assert live["answers"][0]["text"], "the question text comes back for the history page"
+
+    assert client.post(f"/assessments/{sitting}/finish").json() == {"id": sitting, "overall": 0}
+    past = client.get("/history").json()
+    assert len(past) == 1 and past[0]["answered"] == 2 and past[0]["overall"] == 0, past
+    assert past[0]["finished_at"], "a finished sitting must carry its timestamp"
+
+    # A closed sitting takes no more answers, and it must fail before the ASR call.
+    closed = {"question_id": "dsa-1", "level": "beginner", "assessment_id": sitting}
+    assert client.post("/submit", data=closed, files={"audio": silence}).status_code == 404
+    assert client.post("/assessments/9999/finish").status_code == 404
+    assert client.get("/assessments/9999").status_code == 404
+
+    return sitting
+
+
+def _check_isolation(client, sitting):
+    """A second account must not read or write the first one's sitting."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as other:
+        signed = other.post(
+            "/signup", data={"email": "bob@example.com", "name": "Bob", "password": "x" * 12}
+        )
+        assert signed.status_code == 201, signed.text
+        assert other.get("/history").json() == [], "history is per account"
+        assert other.get(f"/assessments/{sitting}").status_code == 404, "not Bob's to read"
+        assert other.post(f"/assessments/{sitting}/finish").status_code == 404
+        filed = other.post(
+            "/submit",
+            data={"question_id": "dsa-1", "assessment_id": sitting},
+            files={"audio": ("a.wav", _silent_wav(), "audio/wav")},
+        )
+        assert filed.status_code == 404, "an answer must not land in another account's sitting"
+
+
 def check():
     """Run the whole API pass. Order matters: the session built by signup carries forward."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -158,7 +216,8 @@ def check():
         _check_bank(client)
         _check_login(client)
         _check_submit(client)
-    print("ok — routes gated by cookie, signup/login round-trip, bank served from sqlite")
+        _check_isolation(client, _check_assessments(client))
+    print("ok — routes gated by cookie, signup/login round-trip, bank and sittings from sqlite")
 
 
 if __name__ == "__main__":

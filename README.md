@@ -54,6 +54,8 @@ MediaRecorder
                                judge ───────────────────→ meta-llama/Llama-3.3-70B-Instruct
                                    ↓ 3 scores + notes
                                weight by level
+                                   ↓
+                               store the answer against the sitting
   ←──────── JSON report ────────┘
 ```
 
@@ -127,7 +129,7 @@ src/
   db/              schema.sql and store.py, the only file containing SQL
 data/
   questions.json   21 questions across 6 topics — the seed for a fresh database
-  practice.db      accounts and the live question bank (gitignored)
+  practice.db      accounts, the live question bank, past interviews (gitignored)
 tests/             the pre-push suite: uv run python -m tests
 logs/              rotating server.log (gitignored)
 ```
@@ -147,7 +149,14 @@ cookie and returns 401 without one.
 | `GET /topics` | Available topics |
 | `GET /questions?topic=` | Questions, optionally filtered |
 | `GET /levels` | `["beginner", "advanced", "expert"]` |
-| `POST /submit` | Multipart: `question_id`, `level`, `audio` (16 kHz mono WAV) → JSON report |
+| `POST /assessments` | Multipart: `level`, `questions`, `topic` → `{"id": n}`, an open sitting |
+| `POST /submit` | Multipart: `question_id`, `level`, `audio` (16 kHz mono WAV), `assessment_id` → JSON report |
+| `POST /assessments/{id}/finish` | Closes the sitting, averaging its graded answers. Idempotent |
+| `GET /history` | Your finished sittings, newest first |
+| `GET /assessments/{id}` | One sitting with every answer. 404 for anyone else's |
+
+`assessment_id` is optional on `/submit` — without it the answer is graded and returned but
+not stored, which keeps a one-off `curl` check working.
 
 A report looks like:
 

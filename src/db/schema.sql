@@ -34,3 +34,36 @@ CREATE TABLE IF NOT EXISTS questions (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS questions_by_topic ON questions(topic_id);
+
+-- One row per interview sitting. topic is NULL for "every topic", and overall and
+-- finished_at stay NULL until the candidate submits, so an abandoned sitting is
+-- distinguishable from a completed one rather than looking like a zero.
+CREATE TABLE IF NOT EXISTS assessments (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  topic       TEXT,
+  level       TEXT NOT NULL,
+  questions   INTEGER,                      -- how many were put to the candidate
+  overall     INTEGER,
+  started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS assessments_by_user ON assessments(user_id, started_at DESC);
+
+-- report holds the judge's whole verdict as JSON, not just the scores: the report page
+-- needs the notes, strengths, gaps and errors too. score is lifted out of it because it
+-- is the one field aggregated in SQL.
+CREATE TABLE IF NOT EXISTS answers (
+  id            INTEGER PRIMARY KEY,
+  assessment_id INTEGER NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
+  question_id   TEXT NOT NULL REFERENCES questions(id),
+  transcript    TEXT NOT NULL,
+  report        TEXT,
+  score         INTEGER,
+  seconds       REAL NOT NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Re-recording an answer replaces it. Without this a second take would be graded
+  -- twice and averaged in twice.
+  UNIQUE (assessment_id, question_id)
+) STRICT;

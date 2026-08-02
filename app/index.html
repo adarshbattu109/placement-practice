@@ -420,6 +420,15 @@
         <span class="flow">converse → follow-ups</span>
       </button>
     </div>
+    <p class="hint">Been here before? <button type="button" id="to-history">See your past interviews</button></p>
+  </section>
+
+  <!-- 2b. History ──────────────────────────────────────────────────── -->
+  <section class="view" id="view-history" hidden>
+    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Past interviews</span></div>
+    <h1 class="big">Where you've been.</h1>
+    <p class="lede">Every finished interview, newest first. Open one to read the answers you gave.</p>
+    <div id="history-list"></div>
   </section>
 
   <!-- 3. Topic + expertise ─────────────────────────────────────────── -->
@@ -529,7 +538,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const SEGMENTS = 24;
-const VIEWS = ['login', 'signup', 'dashboard', 'setup', 'interview', 'report'];
+const VIEWS = ['login', 'signup', 'dashboard', 'history', 'setup', 'interview', 'report'];
 const GATES = ['login', 'signup'];
 const PARAMS = ['completeness', 'correctness', 'relevance'];
 const LEVEL_BLURB = {
@@ -540,7 +549,7 @@ const LEVEL_BLURB = {
 
 const state = {
   candidate: '', level: 'advanced', levels: [], topic: '',
-  questions: [], takes: [], index: 0,
+  questions: [], takes: [], index: 0, assessment: null,
   rec: null, stream: null, ctx: null, ticker: null,
 };
 
@@ -683,6 +692,70 @@ function syncDial() {
 
 document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => show(b.dataset.go));
 
+// ── 2b. History ───────────────────────────────────────────────────────
+// Sittings load on open, never cached: finishing an interview adds one.
+$('to-history').onclick = async () => {
+  show('history');
+  $('history-list').innerHTML = '<p class="none">Loading…</p>';
+  let past;
+  try {
+    past = await get('/history');
+  } catch (e) {
+    $('history-list').innerHTML = `<p class="none">Could not load your history: ${escape(e.message)}</p>`;
+    return;
+  }
+  if (!past.length) {
+    $('history-list').innerHTML = '<p class="none">Nothing yet. Finish an interview and it shows up here.</p>';
+    return;
+  }
+  $('history-list').innerHTML = `<div class="items">${past.map(pastRow).join('')}</div>`;
+  // The answers are a second request each, so fetch one only when it is opened.
+  $('history-list').querySelectorAll('details').forEach(d => d.ontoggle = () => {
+    if (d.open && !d.dataset.loaded) fillPast(d);
+  });
+};
+
+function pastRow(sitting) {
+  const when = new Date(`${sitting.finished_at.replace(' ', 'T')}Z`).toLocaleString();
+  const score = sitting.overall ?? '—';
+  return `<details class="item" data-id="${sitting.id}">
+    <summary><span class="idx">${escape(when)}</span>
+      <span class="qt">${escape(sitting.topic || 'Every topic')} · ${escape(sitting.level)} ·
+        ${sitting.answered} of ${sitting.questions ?? sitting.answered} answered</span>
+      <span class="sc" style="color:${sitting.overall === null ? 'var(--paper-dim)' : tone(score)}">${score}</span></summary>
+    <div class="body"><p class="none">Loading…</p></div>
+  </details>`;
+}
+
+async function fillPast(row) {
+  row.dataset.loaded = '1';
+  const body = row.querySelector('.body');
+  let sitting;
+  try {
+    sitting = await get(`/assessments/${row.dataset.id}`);
+  } catch (e) {
+    delete row.dataset.loaded;            // let a retry re-fetch on the next open
+    body.innerHTML = `<p class="none">Could not load this interview: ${escape(e.message)}</p>`;
+    return;
+  }
+  body.innerHTML = sitting.answers.length
+    ? sitting.answers.map(pastAnswer).join('')
+    : '<p class="none">No answers were recorded in this one.</p>';
+}
+
+function pastAnswer(a) {
+  const said = words(a.transcript)
+    ? `<p class="transcript">${escape(a.transcript)}</p>`
+    : '<p class="none">Nothing was transcribed — the recording was silent.</p>';
+  return `<div class="tx">
+    <h2>${escape(a.text)}
+      <span class="wc" style="color:${a.score === null ? 'var(--paper-dim)' : tone(a.score)}">
+        ${a.score ?? 'not graded'}</span></h2>
+    ${said}
+    ${a.report?.comments?.suggestion ? `<p class="say">${escape(a.report.comments.suggestion)}</p>` : ''}
+  </div>`;
+}
+
 // ── 3. Setup → interview ──────────────────────────────────────────────
 $('to-interview').onclick = () => {
   state.questions = state.topic ? bank.filter(q => q.topic === state.topic) : bank.slice();
@@ -699,7 +772,19 @@ $('to-interview').onclick = () => {
 };
 
 // ── 4. Interview ──────────────────────────────────────────────────────
-$('start').onclick = () => {
+$('start').onclick = async () => {
+  // Open the sitting first: every answer is filed against it, so a failure here has to
+  // stop the interview rather than silently produce an unsaved one.
+  const body = new FormData();
+  body.append('level', state.level);
+  body.append('questions', state.questions.length);
+  if (state.topic) body.append('topic', state.topic);
+  try {
+    state.assessment = (await post('/assessments', body)).id;
+  } catch (e) {
+    $('pre-lede').textContent = `Could not start the interview: ${e.message}`;
+    return;
+  }
   $('pre').hidden = true;
   $('during').hidden = false;
   setPhase('live');          // the standby lamp goes green: the interview is running
@@ -895,6 +980,7 @@ $('confirm-go').onclick = async () => {
       body.append('question_id', q.id);
       body.append('level', state.level);
       body.append('audio', take.wav, 'answer.wav');
+      if (state.assessment) body.append('assessment_id', state.assessment);
       try {
         const res = await fetch('/submit', { method: 'POST', body });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `${res.status} ${res.statusText}`);
@@ -914,7 +1000,18 @@ $('confirm-go').onclick = async () => {
     setPhase('live');
     setStatus(`Grading failed for every answer: ${results.find(r => r.failed)?.failed ?? 'unknown error'}. Your recordings are still here — try submitting again.`, 'bad');
     updateFinish();
-    return;
+    return;   // the sitting stays open, so a retry files against the same one
+  }
+
+  // Close the sitting so it lands in history with an average. The report is already in
+  // hand, so a failure here costs the history row, not the report — don't block on it.
+  if (state.assessment) {
+    try {
+      await post(`/assessments/${state.assessment}/finish`, new FormData());
+    } catch (e) {
+      console.warn('could not close the assessment:', e.message);
+    }
+    state.assessment = null;
   }
   renderReport(results);
   show('report');
