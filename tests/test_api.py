@@ -6,6 +6,7 @@ No network — the only route that would call out is exercised with silence.
 """
 
 import io
+import json
 import os
 import pathlib
 import tempfile
@@ -14,6 +15,9 @@ import wave
 from src.constants.constants import COOKIE_NAME
 
 SILENCE_SECONDS = 2
+# Every fixture MCQ sits at one level, so asking for another must come back empty rather than
+# quietly serving the whole bank — which is what a dropped level filter would look like.
+MCQ_LEVEL = "advanced"
 GATED = (
     "/me",
     "/topics",
@@ -81,6 +85,10 @@ def _check_locked_out(client):
         ).status_code
         == 401
     ), "/submit must require a session"
+    assert (
+        client.post("/assessments/1/mcq", data={"question_id": "dsa-1", "choice": 0}).status_code
+        == 401
+    ), "the mcq route must require a session, before it decides the sitting does not exist"
     # These two stay open: the login page has to load, and the signup form needs the levels.
     assert client.get("/").status_code == 200
     assert client.get("/levels").status_code == 200
@@ -342,6 +350,142 @@ def _check_isolation(client, sitting):
     assert filed.status_code == 404, "an answer must not land in another account's sitting"
 
 
+def _seed_mcq(sources):
+    """Seed a small MCQ bank the way a fresh install does, and return it.
+
+    data/mcq.json is written by a build step and may simply not exist in a clone, and its
+    counts would move under this test every time the bank is regenerated — so the fixture is
+    written to the temp directory and MCQ_JSON rebound at it. That drives the store's own
+    seeding path rather than reaching past it into SQL, which is the only way in anyway.
+
+    One MCQ per source, each with a *different* correct index, so a grader that hardcoded an
+    index or went off by one cannot score four out of four.
+    """
+    from src.db import store
+
+    bank = [
+        {
+            "id": f"{source['id']}-mcq",
+            "source_id": source["id"],
+            "topic": source["topic"],
+            "level": MCQ_LEVEL,
+            "text": f"Which statement about {source['id']} holds?",
+            "options": ["the first", "the second", "the third", "the fourth"],
+            "correct": index,
+            "explanation": f"Because of {source['id']}.",
+        }
+        for index, source in enumerate(sources)
+    ]
+    fixture = store.DB_PATH.parent / "mcq.json"
+    fixture.write_text(json.dumps(bank), encoding="utf-8")
+    before, store.MCQ_JSON = store.MCQ_JSON, fixture
+    try:
+        # The committed bank seeded when this database was opened, and the seed guard is
+        # "table empty" — so clear it, or the fixture never loads and every count below is
+        # really counting data/mcq.json, which moves whenever the bank is regenerated.
+        with store.connect() as conn:
+            conn.execute("DELETE FROM questions WHERE format = 'mcq'")
+            conn.execute("DELETE FROM mcq")
+        store.setup()
+    finally:
+        store.MCQ_JSON = before
+    return bank
+
+
+def _check_mcq(client):
+    """The format that grades without a model: the key stays server-side, start to finish.
+
+    Nothing here reaches the worker or the network — an MCQ is one integer comparison, which
+    is the entire point of the format.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from src.db import store
+
+    sources = store.questions()[:4]
+    bank = _seed_mcq(sources)
+    first, last = bank[0], bank[-1]
+
+    # An MCQ is a row in the same table, so the spoken bank must be unchanged by four of them.
+    assert len(client.get("/questions").json()) == 21, "the format filter guards the vocal flow"
+
+    served = client.get(f"/questions?format=mcq&level={MCQ_LEVEL}").json()
+    assert len(served) == len(bank), served
+    for row in served:
+        assert set(row) == {"id", "text", "topic", "level", "options"}, row
+        assert len(row["options"]) == 4, row
+    assert client.get("/questions?format=mcq").json() == served, "level is optional"
+    assert client.get("/questions?format=mcq&level=beginner").status_code == 404
+    assert client.get("/questions?format=mcq&level=guru").status_code == 422
+    assert client.get("/questions?format=nope").status_code == 422
+
+    opened = client.post(
+        "/assessments",
+        data={"level": MCQ_LEVEL, "questions": len(bank), "format": "mcq"},
+    )
+    assert opened.status_code == 201, opened.text
+    sitting = opened.json()["id"]
+    url = f"/assessments/{sitting}/mcq"
+    rejected = client.post("/assessments", data={"level": MCQ_LEVEL, "questions": 1, "format": "x"})
+    assert rejected.status_code == 422, "an unknown format must not open a sitting"
+    assert client.get(f"/assessments/{sitting}").json()["format"] == "mcq"
+
+    # The one assertion the whole format rests on. A wrong pick and a right pick have to be
+    # indistinguishable to the browser, or it could reveal the key question by question —
+    # and this lives entirely in a response body that nothing else in the suite inspects.
+    wrong = client.post(
+        url, data={"question_id": first["id"], "choice": (first["correct"] + 1) % 4}
+    )
+    right = client.post(url, data={"question_id": first["id"], "choice": first["correct"]})
+    assert wrong.status_code == right.status_code == 201, wrong.text
+    assert wrong.json() == right.json() == {"recorded": True}, wrong.json()
+    assert wrong.text == right.text, "the reply must not vary with correctness"
+    for leak in ("correct", "explanation", "score", "chosen", "option", first["explanation"]):
+        assert leak.lower() not in right.text.lower(), f"the reply leaks {leak!r}: {right.text}"
+
+    for entry in bank[1:-1]:
+        picked = client.post(url, data={"question_id": entry["id"], "choice": entry["correct"]})
+        assert picked.status_code == 201, picked.text
+    # Three right and one wrong, so `overall` can only be the percentage correct.
+    missed = client.post(url, data={"question_id": last["id"], "choice": (last["correct"] + 1) % 4})
+    assert missed.status_code == 201, missed.text
+
+    assert client.post(url, data={"question_id": "nope", "choice": 0}).status_code == 404
+    # A spoken question has no options and no key, so it cannot be answered here either.
+    assert client.post(url, data={"question_id": sources[0]["id"], "choice": 0}).status_code == 404
+    for bad in (4, -1, 99):
+        got = client.post(url, data={"question_id": first["id"], "choice": bad}).status_code
+        assert got == 400, f"choice {bad} → {got}, wanted 400"
+
+    live = client.get(f"/assessments/{sitting}").json()
+    marked = {a["question_id"]: a for a in live["answers"]}
+    assert len(marked) == len(bank), "re-answering replaces the pick rather than adding a row"
+    assert marked[first["id"]]["score"] == 100 and marked[last["id"]]["score"] == 0, marked
+    # The transcript column carries what the candidate conveyed, same as the spoken path.
+    assert marked[first["id"]]["transcript"] == first["options"][first["correct"]]
+    assert marked[first["id"]]["seconds"] == 0, "there is no recording to have a duration"
+    # The key does reach the report — that is the end-only feedback the reply withheld.
+    assert marked[last["id"]]["report"]["correct"] == last["correct"], marked[last["id"]]
+    assert marked[last["id"]]["report"]["explanation"] == last["explanation"]
+    assert live["jobs"] == [] and live["working"] == 0, "an MCQ never reaches the worker"
+    assert live["overall"] == 75, "overall climbs as picks land, before the sitting is closed"
+
+    # A second account cannot write into this sitting, and a closed one takes no more picks.
+    stranger = TestClient(app)
+    signed = stranger.post(
+        "/signup", data={"email": "carol@example.com", "name": "Carol", "password": "x" * 12}
+    )
+    assert signed.status_code == 201, signed.text
+    intruded = stranger.post(url, data={"question_id": first["id"], "choice": first["correct"]})
+    assert intruded.status_code == 404, "a pick must not land in another account's sitting"
+
+    assert client.post(f"/assessments/{sitting}/finish").json()["overall"] == 75
+    closed = client.post(url, data={"question_id": first["id"], "choice": first["correct"]})
+    assert closed.status_code == 404, "a finished sitting takes no more picks"
+    return len(bank)
+
+
 def check():
     """Run the whole API pass. Order matters: the session built by signup carries forward."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -354,9 +498,11 @@ def check():
         _check_submit(client)
         _check_isolation(client, _check_assessments(client))
         _check_queued(client)
+        marked = _check_mcq(client)
     print(
         "ok — routes gated by cookie, signup/login round-trip, sittings from sqlite, "
-        "a real take queues instead of grading in the request"
+        f"a real take queues instead of grading in the request, {marked} picks marked "
+        "without a model and the key never leaves the server"
     )
 
 

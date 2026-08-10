@@ -8,12 +8,22 @@ import time
 
 import numpy as np
 import soundfile as sf
-from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from app import setup_logging
-from app.evaluate import evaluate
+from app.evaluate import evaluate, grade_choice
 from app.worker import start as start_worker
 from app.worker import stop as stop_worker
 from src.constants.constants import (
@@ -50,6 +60,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Placemint.Academy", lifespan=lifespan)
+
+# The two interview formats that grade. Telephonic and video have cards on the front page but
+# are disabled, and no route accepts them, so they are deliberately not listed here.
+FORMATS = ("vocal", "mcq")
 
 
 def current_user(session: str | None = Cookie(None, alias=COOKIE_NAME)) -> dict:
@@ -132,10 +146,31 @@ def topics(user: dict = Depends(current_user)):
 
 
 @app.get("/questions")
-def questions(topic: str | None = None, user: dict = Depends(current_user)):
-    picked = store.questions(topic)
+def questions(
+    topic: str | None = None,
+    level: str | None = None,
+    fmt: str = Query("vocal", alias="format"),
+    user: dict = Depends(current_user),
+):
+    """The bank for one topic — spoken by default, four-option stems with `?format=mcq`.
+
+    One route rather than a sibling: both formats are the same table filtered differently and
+    the browser asks for a set by topic either way, so a second route would repeat the auth
+    dependency, the empty-set 404 and the topic message to change one call in the store.
+
+    `level` narrows only the MCQ bank, and that asymmetry is the format's whole design: for a
+    right-or-wrong answer the level picks which questions you get, where for a spoken one it
+    shifts the judge instead. `fmt`, not `format`, because the builtin is worth not shadowing;
+    the alias keeps the url the design named.
+    """
+    if fmt not in FORMATS:
+        raise HTTPException(422, f"Unknown format {fmt!r}. Expected one of {sorted(FORMATS)}.")
+    if level is not None and level not in LEVELS:
+        raise HTTPException(422, f"Unknown level {level!r}. Expected one of {sorted(LEVELS)}.")
+
+    picked = store.mcq_questions(topic, level) if fmt == "mcq" else store.questions(topic)
     if not picked:
-        raise HTTPException(404, f"Unknown topic {topic!r}. Available: {store.topics()}")
+        raise HTTPException(404, f"No {fmt} questions for topic {topic!r}. Have: {store.topics()}")
     return picked
 
 
@@ -165,26 +200,75 @@ def open_assessment(
     level: str = Form(...),
     questions: int = Form(...),
     topic: str | None = Form(None),
+    fmt: str = Form("vocal", alias="format"),
     user: dict = Depends(current_user),
 ):
-    """Open a sitting. The browser calls this when the candidate starts an interview."""
+    """Open a sitting. The browser calls this when the candidate starts an interview.
+
+    `format` is stored rather than derived: the report screen has to know which of the two to
+    render before it has fetched a single answer.
+    """
     if level not in LEVELS:
         raise HTTPException(422, f"Unknown level {level!r}. Expected one of {sorted(LEVELS)}.")
+    if fmt not in FORMATS:
+        raise HTTPException(422, f"Unknown format {fmt!r}. Expected one of {sorted(FORMATS)}.")
     # An empty topic field means every topic, which is stored as NULL.
     topic = topic or None
     if topic is not None and topic not in store.topics():
         raise HTTPException(404, f"Unknown topic {topic!r}")
 
-    assessment_id = store.start_assessment(user["id"], topic, level, questions)
+    assessment_id = store.start_assessment(user["id"], topic, level, questions, fmt)
     log.info(
-        "assessment %d opened user=%d topic=%s level=%s n=%d",
+        "assessment %d opened user=%d format=%s topic=%s level=%s n=%d",
         assessment_id,
         user["id"],
+        fmt,
         topic or "*",
         level,
         questions,
     )
     return {"id": assessment_id}
+
+
+@app.post("/assessments/{assessment_id}/mcq", status_code=201)
+def answer_mcq(
+    assessment_id: int,
+    question_id: str = Form(...),
+    choice: int = Form(...),
+    user: dict = Depends(current_user),
+):
+    """Mark one multiple-choice pick. Nothing remote runs, so 201 rather than /submit's 202.
+
+    The reply is `{"recorded": true}` and deliberately not the verdict: a browser that could see
+    correctness here could walk the answer key question by question, which is the property the
+    format rests on. The pick is graded and stored — the report is where it becomes visible.
+    """
+    if not store.owns_assessment(user["id"], assessment_id):
+        log.warning(
+            "mcq rejected: user %d cannot write to assessment %d", user["id"], assessment_id
+        )
+        raise HTTPException(404, "No such open assessment.")
+    question = store.mcq_row(question_id)
+    if question is None:
+        # Also the answer for a spoken question posted here: it has no options and no key.
+        log.warning("mcq rejected: unknown question_id %r", question_id)
+        raise HTTPException(404, f"Unknown question_id {question_id!r}")
+    try:
+        report = grade_choice(question, choice)
+    except ValueError as e:
+        # The one place a route converts a domain error into a status: evaluate.py raises
+        # ValueError because it does not know HTTP exists, and that is its whole contract.
+        raise HTTPException(400, str(e)) from e
+
+    # seconds=0.0 because there is no recording, and so no recordings row and no jobs row —
+    # the worker never sees an MCQ sitting. rescore rather than waiting for finish, so overall
+    # climbs as picks land exactly as it does on the spoken path.
+    store.save_answer(assessment_id, question_id, report["transcript"], 0.0, report)
+    store.rescore_assessment(assessment_id)
+    log.info(
+        "mcq %s marked for assessment %d score=%d", question_id, assessment_id, report["score"]
+    )
+    return {"recorded": True}
 
 
 @app.post("/assessments/{assessment_id}/finish")

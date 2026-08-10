@@ -15,7 +15,7 @@ from src.constants.constants import (
     MAX_JOB_ATTEMPTS,
     RECORDING_RETENTION_DAYS,
 )
-from src.constants.filepaths import DB_PATH, QUESTIONS_JSON, SCHEMA_SQL
+from src.constants.filepaths import DB_PATH, MCQ_JSON, QUESTIONS_JSON, SCHEMA_SQL
 from src.helpers.security import hash_password, verify_password
 
 
@@ -37,12 +37,46 @@ def connect(path=None):
 
 
 def setup(path=None):
-    """Apply the schema and seed the question bank on a fresh database."""
+    """Apply the schema, migrate an older database, and seed both banks on a fresh one."""
     (path or DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with connect(path) as conn:
         conn.executescript(SCHEMA_SQL.read_text())
+        _migrate(conn)
         if not conn.execute("SELECT 1 FROM questions LIMIT 1").fetchone():
             _seed(conn, json.loads(QUESTIONS_JSON.read_text()))
+        # mcq.json is written by a build step and committed, so it is simply absent until
+        # that has been run once — nothing to seed is not a failure to start up.
+        if MCQ_JSON.exists() and not conn.execute("SELECT 1 FROM mcq LIMIT 1").fetchone():
+            _seed_mcq(conn, json.loads(MCQ_JSON.read_text(encoding="utf-8")))
+
+
+# Columns that arrived after a database was already in the field. schema.sql is re-applied
+# through executescript() on every open, so everything in it has to be idempotent — and
+# SQLite has no ADD COLUMN IF NOT EXISTS. A bare ALTER in the schema file throws
+# "duplicate column name" the second time the app starts and takes it down with it, so the
+# guard lives here instead: read the columns back, add only what is missing.
+#
+# This is the project's first migration. Later ones append to this table; anything that
+# cannot be expressed as one ALTER needs its own function and its own thought.
+_MIGRATIONS = (
+    # Discriminators, both defaulting to the format that existed before there was a choice —
+    # so every row already in the database reads correctly rather than needing a backfill.
+    ("questions", "format", "TEXT NOT NULL DEFAULT 'vocal'"),
+    ("assessments", "format", "TEXT NOT NULL DEFAULT 'vocal'"),
+)
+
+
+def _migrate(conn):
+    """Add any column the database predates. A no-op once applied, which is the point.
+
+    Interpolated rather than bound because SQLite takes no parameter in an identifier
+    position, in either PRAGMA or ALTER; the names are literals from `_MIGRATIONS` above and
+    never reach here from a request.
+    """
+    for table, column, spec in _MIGRATIONS:
+        present = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in present:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {spec}")
 
 
 def _seed(conn, bank):
@@ -53,6 +87,37 @@ def _seed(conn, bank):
             "INSERT INTO questions(id, topic_id, text, ideal_answer) "
             "VALUES (?, (SELECT id FROM topics WHERE name = ?), ?, ?)",
             (question["id"], question["topic"], question["text"], question["ideal_answer"]),
+        )
+
+
+def _seed_mcq(conn, bank):
+    """Load mcq.json. One entry is two rows: the question itself, then its options.
+
+    Both inserts share the caller's transaction, so a bad entry rolls the questions row back
+    with the mcq row and a half-seeded MCQ is never reachable — which is the whole reason the
+    options are NOT NULL in their own table rather than nullable columns on questions.
+
+    The correct option's text becomes ideal_answer. That is not a filler value to satisfy a
+    NOT NULL: for an MCQ, the correct option *is* the ideal answer.
+    """
+    for entry in bank:
+        conn.execute("INSERT OR IGNORE INTO topics(name) VALUES (?)", (entry["topic"],))
+        conn.execute(
+            "INSERT INTO questions(id, topic_id, text, ideal_answer, format) "
+            "VALUES (?, (SELECT id FROM topics WHERE name = ?), ?, ?, 'mcq')",
+            (entry["id"], entry["topic"], entry["text"], entry["options"][entry["correct"]]),
+        )
+        conn.execute(
+            "INSERT INTO mcq(question_id, source_id, level, options, correct, explanation) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                entry["id"],
+                entry["source_id"],
+                entry["level"],
+                json.dumps(entry["options"]),
+                entry["correct"],
+                entry["explanation"],
+            ),
         )
 
 
@@ -70,28 +135,72 @@ def topics(path=None):
 
 
 def questions(topic=None, path=None):
-    """Questions for one topic, or all of them. Excludes ideal_answer — the browser sees these."""
+    """Vocal questions for one topic, or all. Excludes ideal_answer — the browser sees these.
+
+    An MCQ is a real row in the same table, so without the format test the spoken flow would
+    serve four-option stems that have no audio and no judge behind them.
+    """
     with connect(path) as conn:
         return [
             dict(row)
             for row in conn.execute(
                 "SELECT q.id, t.name AS topic, q.text FROM questions q "
                 "JOIN topics t ON t.id = q.topic_id "
-                "WHERE ?1 IS NULL OR t.name = ?1 ORDER BY q.id",
+                "WHERE q.format = 'vocal' AND (?1 IS NULL OR t.name = ?1) ORDER BY q.id",
                 (topic,),
             )
         ]
 
 
 def question(question_id, path=None):
-    """One question including its ideal answer, or None. Server-side only."""
+    """One spoken question including its ideal answer, or None. Server-side only.
+
+    Vocal only, like `questions()`: an MCQ id comes back as None here and goes through
+    `mcq_row()` instead, which is what carries the answer key.
+    """
     with connect(path) as conn:
         row = conn.execute(
             "SELECT q.id, t.name AS topic, q.text, q.ideal_answer FROM questions q "
-            "JOIN topics t ON t.id = q.topic_id WHERE q.id = ?",
+            "JOIN topics t ON t.id = q.topic_id WHERE q.id = ? AND q.format = 'vocal'",
             (question_id,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def mcq_questions(topic=None, level=None, path=None):
+    """The MCQ set for a topic and level, with `options` parsed. The browser sees these.
+
+    `correct` and `explanation` are absent by construction, not by the caller remembering to
+    strip them: feedback is end-only, and a browser holding the key could reveal it question
+    by question. `mcq_row()` is the server-side view that has them.
+    """
+    with connect(path) as conn:
+        return [
+            dict(row) | {"options": json.loads(row["options"])}
+            for row in conn.execute(
+                "SELECT q.id, q.text, t.name AS topic, m.level, m.options FROM mcq m "
+                "JOIN questions q ON q.id = m.question_id "
+                "JOIN topics t ON t.id = q.topic_id "
+                "WHERE (?1 IS NULL OR t.name = ?1) AND (?2 IS NULL OR m.level = ?2) "
+                "ORDER BY q.id",
+                (topic, level),
+            )
+        ]
+
+
+def mcq_row(question_id, path=None):
+    """One MCQ with its answer key and explanation, or None. Server-side grading only."""
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT q.id, q.text, t.name AS topic, m.level, m.options, m.correct, "
+            "       m.explanation FROM mcq m "
+            "JOIN questions q ON q.id = m.question_id "
+            "JOIN topics t ON t.id = q.topic_id WHERE m.question_id = ?",
+            (question_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return dict(row) | {"options": json.loads(row["options"])}
 
 
 # --- accounts -----------------------------------------------------------------------
@@ -149,14 +258,19 @@ def profile(user_id, path=None):
 # --- assessments --------------------------------------------------------------------
 
 
-def start_assessment(user_id, topic, level, questions, path=None):
-    """Open a sitting and return its id. `topic` is None for every topic."""
+def start_assessment(user_id, topic, level, questions, fmt="vocal", path=None):
+    """Open a sitting and return its id. `topic` is None for every topic.
+
+    `fmt`, not `format`, which is a builtin. It defaults to 'vocal' so the spoken flow reads
+    exactly as it did before there was a second format to pick.
+    """
     if level not in LEVELS:
         raise ValueError(f"Unknown level {level!r}. Expected one of {sorted(LEVELS)}.")
     with connect(path) as conn:
         return conn.execute(
-            "INSERT INTO assessments(user_id, topic, level, questions) VALUES (?, ?, ?, ?)",
-            (user_id, topic, level, questions),
+            "INSERT INTO assessments(user_id, topic, level, questions, format) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, topic, level, questions, fmt),
         ).lastrowid
 
 
@@ -262,7 +376,9 @@ def history(user_id, limit=20, path=None):
         return [
             dict(row)
             for row in conn.execute(
-                "SELECT a.id, a.topic, a.level, a.questions, a.overall, a.started_at,"
+                # format rides along so the dashboard can label a row and the report screen
+                # knows which of the two to render before it fetches anything.
+                "SELECT a.id, a.topic, a.level, a.format, a.questions, a.overall, a.started_at,"
                 "       a.finished_at, count(n.id) AS answered, count(n.score) AS graded,"
                 f"      {_PROGRESS}"
                 " FROM assessments a LEFT JOIN answers n ON n.assessment_id = a.id"
@@ -283,7 +399,8 @@ def assessment(user_id, assessment_id, path=None):
     """
     with connect(path) as conn:
         head = conn.execute(
-            "SELECT a.id, a.topic, a.level, a.questions, a.overall, a.started_at, a.finished_at,"
+            "SELECT a.id, a.topic, a.level, a.format, a.questions, a.overall, a.started_at,"
+            "       a.finished_at,"
             f"      {_PROGRESS}"
             " FROM assessments a WHERE a.id = ? AND a.user_id = ?",
             (assessment_id, user_id),
@@ -550,11 +667,14 @@ def demo():
         _check_assessments(db, uid)
         _check_recordings(db, uid)
         _check_jobs(db, uid)
+        # Last: it seeds a second bank into the same database and deletes a source question
+        # to prove the cascade, so nothing above should be reading the bank afterwards.
+        mcqs = _check_mcq(db, uid)
 
     print(
         f"ok — {len(bank)} questions seeded, signup/login round-trips, duplicates rejected, "
         "assessments persist and stay per-user, takes round-trip and expire, "
-        "jobs claim once and retry then park"
+        f"jobs claim once and retry then park, {mcqs} mcqs seed idempotently and keep their key"
     )
 
 
@@ -711,6 +831,120 @@ def _check_jobs(db, uid):
     with connect(db) as conn:  # the cascade, same as recordings
         conn.execute("DELETE FROM assessments WHERE id = ?", (sitting,))
         assert conn.execute("SELECT count(*) c FROM jobs").fetchone()["c"] == 0
+
+
+def _check_mcq(db, uid):
+    """The satellite table: seeding, the answer key staying server-side, and the migration.
+
+    Seeded from a fixture in the temp directory rather than the committed data/mcq.json, which
+    a build step writes and so may not exist yet — and which would move the counts here every
+    time the bank is regenerated.
+    """
+    fixture = db.parent / "mcq.json"
+    sources = questions(path=db)[5:7]
+    bank = [
+        {
+            "id": f"{source['id']}-{level}",
+            "source_id": source["id"],
+            "topic": source["topic"],
+            "level": level,
+            "text": f"Which statement about {source['id']} holds at {level}?",
+            "options": ["the first", "the second", "the third", "the fourth"],
+            "correct": index % 4,
+            "explanation": f"Because of {source['id']}.",
+        }
+        for index, (source, level) in enumerate(
+            (s, lv) for s in sources for lv in ("beginner", "advanced", "expert")
+        )
+    ]
+    fixture.write_text(json.dumps(bank), encoding="utf-8")
+
+    before = MCQ_JSON
+    globals()["MCQ_JSON"] = fixture
+    try:
+        # The database was opened before this fixture was bound, so the committed bank is
+        # already seeded. Clearing both tables puts the seed guard back where this check
+        # needs it, and keeps the counts below independent of how big the real bank grows.
+        with connect(db) as conn:
+            conn.execute("DELETE FROM questions WHERE format = 'mcq'")
+            conn.execute("DELETE FROM mcq")
+        setup(db)
+        # Seeding is guarded on the table being empty, exactly like questions.json, so the
+        # second and third open must not load the bank again.
+        setup(db)
+        setup(db)
+        with connect(db) as conn:
+            assert conn.execute("SELECT count(*) c FROM mcq").fetchone()["c"] == len(bank)
+            # And this is what the guarded migration buys: schema.sql was re-applied on every
+            # one of those opens, and a bare ALTER would have thrown on the second.
+            for table in ("questions", "assessments"):
+                cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]
+                assert cols.count("format") == 1, (table, cols)
+    finally:
+        globals()["MCQ_JSON"] = before
+
+    # An MCQ is a row in `questions`, but the spoken flow must not serve it.
+    assert len(questions(path=db)) == len(json.loads(QUESTIONS_JSON.read_text()))
+    assert question(bank[0]["id"], path=db) is None, "an mcq id is not a vocal question"
+
+    served = mcq_questions(path=db)
+    assert len(served) == len(bank), served
+    assert served[0]["options"] == bank[0]["options"], "options come back parsed, not as JSON"
+    for row in served:
+        assert "correct" not in row and "explanation" not in row, (
+            "the browser must never receive the answer key — feedback is end-only"
+        )
+    assert len(mcq_questions(level="beginner", path=db)) == len(sources)
+    one_topic = mcq_questions(topic=sources[0]["topic"], path=db)
+    assert one_topic and all(r["topic"] == sources[0]["topic"] for r in one_topic)
+    assert mcq_questions(topic="Nope", path=db) == []
+
+    keyed = mcq_row(bank[0]["id"], path=db)
+    right = keyed["options"][keyed["correct"]]
+    assert keyed["correct"] == bank[0]["correct"] and keyed["explanation"]
+    assert keyed["options"] == bank[0]["options"] and keyed["level"] == "beginner"
+    assert mcq_row("no-such-question", path=db) is None
+    assert mcq_row(sources[0]["id"], path=db) is None, "a vocal question has no mcq row"
+    with connect(db) as conn:  # the correct option *is* the ideal answer, not a filler value
+        stored = conn.execute(
+            "SELECT ideal_answer, format FROM questions WHERE id = ?", (bank[0]["id"],)
+        ).fetchone()
+    assert stored["ideal_answer"] == right, dict(stored)
+    assert stored["format"] == "mcq"
+
+    # An MCQ answer is an ordinary answers row, so the existing upsert covers a re-answer.
+    sitting = start_assessment(uid, None, "beginner", 2, fmt="mcq", path=db)
+    assert history(uid, path=db)[0]["format"] == "mcq", "the report screen branches on this"
+    assert assessment(uid, sitting, path=db)["format"] == "mcq"
+    verdict = {"score": 0, "chosen": 1, "correct": keyed["correct"]}
+    save_answer(sitting, bank[0]["id"], keyed["options"][1], 0.0, verdict, path=db)
+    save_answer(
+        sitting,
+        bank[0]["id"],
+        right,
+        0.0,
+        {**verdict, "score": 100, "chosen": keyed["correct"]},
+        path=db,
+    )
+    marked = assessment(uid, sitting, path=db)["answers"]
+    assert len(marked) == 1, "re-answering replaces the pick rather than scoring it twice"
+    assert marked[0]["score"] == 100 and marked[0]["transcript"] == right, marked
+    assert finish_assessment(sitting, path=db) == 100, "overall is the percentage correct"
+
+    # A sitting opened the old way still reads as vocal: the column default is what makes the
+    # migration a no-op for every row that was already in the database.
+    older = start_assessment(uid, None, "expert", 1, path=db)
+    assert assessment(uid, older, path=db)["format"] == "vocal"
+
+    # Editing or deleting a source question takes its MCQs with it rather than orphaning them.
+    with connect(db) as conn:
+        conn.execute("DELETE FROM questions WHERE id = ?", (sources[1]["id"],))
+        orphans = conn.execute(
+            "SELECT count(*) c FROM mcq WHERE source_id = ?", (sources[1]["id"],)
+        ).fetchone()["c"]
+        assert orphans == 0, "deleting a source must cascade to its mcq rows"
+        assert conn.execute("SELECT count(*) c FROM mcq").fetchone()["c"] == len(bank) - 3
+    return len(bank)
 
 
 if __name__ == "__main__":

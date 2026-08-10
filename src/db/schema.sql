@@ -35,6 +35,34 @@ CREATE TABLE IF NOT EXISTS questions (
 
 CREATE INDEX IF NOT EXISTS questions_by_topic ON questions(topic_id);
 
+-- The four options and the answer key for one MCQ. Its own table rather than four nullable
+-- columns on questions, and the reason is invariant enforcement, not row size: every field
+-- here is NOT NULL, so an MCQ is either completely specified or absent. Nullable columns
+-- would permit a half-generated row — options written, correct still NULL — in a schema that
+-- is STRICT everywhere else. This is deliberately NOT the recordings argument: that split was
+-- a ~200 kB blob dragging audio into every history query, and a ~300-byte options array is
+-- nothing like it. Nobody should read a size rationale into this one.
+--
+-- The row this hangs off is a real questions row (answers, recordings and jobs all reference
+-- questions(id), so an MCQ has to be one to be answerable), with format='mcq' and the correct
+-- option's text as its ideal_answer.
+--
+-- source_id is the vocal question this was generated from. It earns its place twice: the
+-- build step's skip check is "does this source already have its three levels", and editing
+-- or deleting a source takes its MCQs with it instead of orphaning them.
+CREATE TABLE IF NOT EXISTS mcq (
+  question_id TEXT PRIMARY KEY REFERENCES questions(id) ON DELETE CASCADE,
+  source_id   TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+  level       TEXT NOT NULL,
+  options     TEXT NOT NULL,    -- JSON array of exactly 4 strings
+  correct     INTEGER NOT NULL, -- 0-3, an index into options
+  explanation TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+) STRICT;
+
+-- A sitting serves every MCQ at one level, so level is what the set is selected by.
+CREATE INDEX IF NOT EXISTS mcq_by_level ON mcq(level);
+
 -- One row per interview sitting. topic is NULL for "every topic", and overall and
 -- finished_at stay NULL until the candidate submits, so an abandoned sitting is
 -- distinguishable from a completed one rather than looking like a zero.

@@ -271,6 +271,36 @@
   .nav button[aria-current="true"] { border-color: var(--amber); color: var(--amber); background: rgba(255,179,64,.1); }
   .nav .legend { font: 400 .68rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--paper-dim); margin-left: auto; }
 
+  /* ── MCQ options ────────────────────────────────────────────────── */
+  /* A real radio group: one native input per option, so arrow keys, labels and screen
+     readers work without a line of JavaScript. The input itself is visually hidden and
+     the label carries the state, which is what lets the whole row be the hit target. */
+  .options { display: grid; gap: .6rem; margin-bottom: 1.25rem; }
+  .options label {
+    display: flex; gap: .85rem; align-items: flex-start; cursor: pointer;
+    padding: .9rem 1.1rem; border: 1px solid var(--seam); border-radius: 12px;
+    background: var(--slab); transition: border-color .15s, background .15s;
+  }
+  .options label:hover { border-color: var(--amber); }
+  .options input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .options .pick {
+    flex: none; width: 1.6rem; height: 1.6rem; border-radius: 50%;
+    border: 1px solid var(--seam); display: grid; place-items: center;
+    font: 400 .8rem/1 var(--mono); color: var(--paper-dim);
+  }
+  .options label:has(input:checked) { border-color: var(--amber); background: rgba(255,179,64,.1); }
+  .options label:has(input:checked) .pick { border-color: var(--amber); color: var(--amber); }
+  /* Keyboard focus has to stay visible even though the input itself is hidden. */
+  .options label:has(input:focus-visible) { outline: 2px solid var(--amber); outline-offset: 2px; }
+  /* The report replays the same options as a read-only answer sheet, where the letter is a
+     label rather than a control — inline, and taking the row's colour. */
+  .notes .pick {
+    display: inline-grid; place-items: center; width: 1.4rem; height: 1.4rem;
+    border: 1px solid currentColor; border-radius: 50%; margin-right: .5rem;
+    font: 400 .72rem/1 var(--mono); vertical-align: middle; opacity: .85;
+  }
+  .notes li { margin-bottom: .35rem; }
+
   /* the end-of-interview action sits apart from the per-question deck */
   .finish {
     margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px dashed var(--seam);
@@ -500,8 +530,14 @@
   <section class="view" id="view-dashboard" hidden>
     <div class="crumb"><button data-go="home">← Home</button><span class="mono-label">Take an assessment</span></div>
     <h1 class="big">Pick your format.</h1>
-    <p class="lede">One is ready now. The other two need a paid tier for live streaming and video.</p>
+    <p class="lede">Two are ready now. The other two need a paid tier for live streaming and video.</p>
     <div class="modes">
+      <button class="mode" id="mode-mcq">
+        <span class="tier">Free</span>
+        <h3>MCQ</h3>
+        <p>Four options, one right answer. Nothing is recorded and nothing is spoken.</p>
+        <span class="flow">read → pick → submit</span>
+      </button>
       <button class="mode" id="mode-vocal">
         <span class="tier">Free</span>
         <h3>Vocal</h3>
@@ -533,7 +569,7 @@
 
   <!-- 3. Topic + expertise ─────────────────────────────────────────── -->
   <section class="view" id="view-setup" hidden>
-    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label">Vocal assessment</span></div>
+    <div class="crumb"><button data-go="dashboard">← Formats</button><span class="mono-label" id="setup-kind">Vocal assessment</span></div>
     <h1 class="big">What are we practising?</h1>
     <p class="lede">Pick a topic, then set the bar you want to be held to.</p>
 
@@ -608,6 +644,55 @@
     </div>
   </section>
 
+  <!-- 4b. MCQ ───────────────────────────────────────────────────────── -->
+  <section class="view" id="view-mcq" hidden>
+    <div class="crumb">
+      <button data-go="setup">← Setup</button>
+      <span class="mono-label" id="mcq-summary"></span>
+    </div>
+
+    <div id="mcq-pre">
+      <h1 class="big">Ready when you are.</h1>
+      <p class="lede">Four options a question, one right answer. Nothing is marked until you submit the whole set, so you can change any answer until then.</p>
+      <button class="key go wide" id="mcq-start" style="max-width:22rem">Start assessment</button>
+    </div>
+
+    <div id="mcq-during" hidden>
+      <div class="nav" id="mcq-nav"></div>
+
+      <div class="qcard">
+        <div class="qmeta">
+          <span class="chip" id="mcq-tag">—</span>
+          <span class="count" id="mcq-count"></span>
+          <span class="count" id="mcq-level-tag"></span>
+        </div>
+        <p id="mcq-question">Loading…</p>
+      </div>
+
+      <div class="options" id="mcq-options"></div>
+
+      <div class="console">
+        <div class="deck">
+          <button class="ghost" id="mcq-prev">← Previous</button>
+          <button class="ghost" id="mcq-next">Next →</button>
+        </div>
+        <p class="status" id="mcq-status">Pick the answer you think is right.</p>
+      </div>
+
+      <div class="finish">
+        <button class="key go" id="mcq-finish">End assessment &amp; submit</button>
+        <p id="mcq-finish-note"></p>
+      </div>
+    </div>
+
+    <div id="mcq-grading" class="grading" hidden aria-live="polite">
+      <h1 class="big">Marking your answers.</h1>
+      <p class="lede">No model runs here — each pick is checked against the answer key, so this is immediate.</p>
+      <div class="bar"><span id="mcq-bar-fill"></span></div>
+      <p class="count" id="mcq-grading-status">Starting…</p>
+    </div>
+  </section>
+
   <!-- 5. Report ────────────────────────────────────────────────────── -->
   <section class="view" id="view-report" hidden>
     <div class="crumb no-print">
@@ -629,7 +714,7 @@
 <!-- Submit confirmation ────────────────────────────────────────────── -->
 <dialog id="confirm">
   <h3>Submit for evaluation?</h3>
-  <p>This ends the interview. Your answers are transcribed and graded, and you can't re-record after this.</p>
+  <p id="confirm-blurb">This ends the interview. Your answers are transcribed and graded, and you can't re-record after this.</p>
   <div class="tally" id="tally"></div>
   <p id="confirm-leaving" hidden>You're on your way out of the interview. Submitting is the only
   thing that closes it — leave without submitting and this sitting stays unfinished for good.</p>
@@ -643,14 +728,16 @@
 <script>
 const $ = id => document.getElementById(id);
 const SEGMENTS = 24;
-const VIEWS = ['login', 'signup', 'home', 'dashboard', 'history', 'setup', 'interview', 'report'];
+const VIEWS = ['login', 'signup', 'home', 'dashboard', 'history', 'setup', 'interview', 'mcq', 'report'];
 const GATES = ['login', 'signup'];
 // The tagline, shown before you are signed in and on home — where there is no location to
-// report. Every other view replaces it with where you are.
+// report. Every other view replaces it with where you are. `setup` is shared by both
+// formats, so its label is rewritten when a format is chosen rather than being fixed here.
 const TAGLINE = 'Learning | Assessment | Excellence';
 const WHERE = {
   dashboard: 'Take an assessment', history: 'Past assessments',
-  setup: 'Vocal · free tier', interview: 'Vocal · free tier', report: 'Report',
+  setup: 'Vocal · free tier', interview: 'Vocal · free tier',
+  mcq: 'MCQ · free tier', report: 'Report',
 };
 const PARAMS = ['completeness', 'correctness', 'relevance'];
 const LEVEL_BLURB = {
@@ -663,6 +750,12 @@ const state = {
   candidate: '', level: 'advanced', levels: [], topic: '',
   questions: [], takes: [], index: 0, assessment: null,
   rec: null, stream: null, ctx: null, ticker: null,
+  // Which format the current sitting is. The setup screen is shared, so this is what the
+  // start button and the leave guard read to know which of the two they are in.
+  format: 'vocal',
+  // MCQ picks, by question index. Held here until submit rather than posted per question:
+  // nothing is marked until the set is sent, so an answer can be changed until then.
+  picks: [],
 };
 
 $('vu').innerHTML = '<i></i>'.repeat(SEGMENTS);
@@ -712,7 +805,12 @@ async function post(url, form) {
   return data;
 }
 
-const answered = () => state.takes.filter(Boolean).length;
+// How much of the current sitting would be lost by walking out of it. Branches on format
+// because the two store their work differently — without this an MCQ sitting reads as
+// nothing answered, and the guard would let it be abandoned without a word.
+const answered = () => state.format === 'mcq'
+  ? state.picks.filter(p => p !== null).length
+  : state.takes.filter(Boolean).length;
 
 // ── 1. Login and sign up ──────────────────────────────────────────────
 function signedIn(profile) {
@@ -811,31 +909,49 @@ async function loadBank() {
   return bank ??= await get('/questions');
 }
 
-$('mode-vocal').onclick = async () => {
+// The MCQ bank, fetched once. Separate from `bank` because the two formats are separate
+// question sets — every count and every topic on the setup screen differs between them.
+let mcqBank = null;
+
+async function loadMcqBank() {
+  return mcqBank ??= await get('/questions?format=mcq');
+}
+
+// Both formats land on the same setup screen. `state.format` is what start reads, and the
+// topic cards are rebuilt because a topic with vocal questions may have no MCQs, and the
+// counts differ even where both exist.
+async function openSetup(format) {
+  state.format = format;
+  state.topic = '';
   show('setup');
+  $('strip-sub').textContent = `${format === 'mcq' ? 'MCQ' : 'Vocal'} · free tier`;
+  // The crumb ships with the vocal wording, so the MCQ path has to overwrite it or the
+  // screen contradicts the card that was just clicked.
+  $('setup-kind').textContent = format === 'mcq' ? 'MCQ assessment' : 'Vocal assessment';
   try {
-    await loadBank();
+    await (format === 'mcq' ? loadMcqBank() : loadBank());
   } catch (e) {
     $('topics').innerHTML = `<p class="none">Cannot reach the server: ${escape(e.message)}</p>`;
     return;
   }
-  // Built once, then left alone so a chosen topic and level survive a trip home. Keyed on
-  // what is actually rendered, not on `bank` — the home readout may have loaded that first.
-  if ($('topics').querySelector('.topic')) return;
   buildTopics();
   buildDial();
-};
+}
+
+$('mode-vocal').onclick = () => openSetup('vocal');
+$('mode-mcq').onclick = () => openSetup('mcq');
 
 function buildTopics() {
   const counts = new Map();
-  bank.forEach(q => counts.set(q.topic, (counts.get(q.topic) ?? 0) + 1));
+  const pool = state.format === 'mcq' ? mcqBank : bank;
+  pool.forEach(q => counts.set(q.topic, (counts.get(q.topic) ?? 0) + 1));
   const card = (value, label, n, extra = '') => `
     <button class="topic ${extra}" data-topic="${escape(value)}" aria-pressed="${value === state.topic}">
       <strong>${escape(label)}</strong>
       <span class="n">${n} question${n === 1 ? '' : 's'}</span>
     </button>`;
   $('topics').innerHTML = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([t, n]) => card(t, t, n)).join('') + card('', 'Every topic', bank.length, 'every');
+    .map(([t, n]) => card(t, t, n)).join('') + card('', 'Every topic', pool.length, 'every');
   $('topics').querySelectorAll('.topic').forEach(b => b.onclick = () => {
     state.topic = b.dataset.topic;
     $('topics').querySelectorAll('.topic').forEach(o => o.setAttribute('aria-pressed', o === b));
@@ -1010,12 +1126,27 @@ function storedResults(sitting) {
 
 // ── 3. Setup → interview ──────────────────────────────────────────────
 $('to-interview').onclick = () => {
-  state.questions = state.topic ? bank.filter(q => q.topic === state.topic) : bank.slice();
+  const pool = state.format === 'mcq' ? mcqBank : bank;
+  state.questions = state.topic ? pool.filter(q => q.topic === state.topic) : pool.slice();
   if (!state.questions.length) return;
-  state.takes = state.questions.map(() => null);
   state.index = 0;
   const n = state.questions.length;
-  $('setup-summary').textContent = `${state.topic || 'Every topic'} · ${state.level}`;
+  const summary = `${state.topic || 'Every topic'} · ${state.level}`;
+
+  if (state.format === 'mcq') {
+    // A fresh array of nulls, not a reused one: an unanswered question must be
+    // distinguishable from a picked option 0.
+    state.picks = state.questions.map(() => null);
+    $('mcq-summary').textContent = summary;
+    $('mcq-pre').hidden = false;
+    $('mcq-during').hidden = true;
+    $('mcq-grading').hidden = true;
+    show('mcq');
+    return;
+  }
+
+  state.takes = state.questions.map(() => null);
+  $('setup-summary').textContent = summary;
   $('pre-lede').textContent = `${n} question${n === 1 ? '' : 's'}, one at a time. Record each answer, then submit the whole set at the end for evaluation.`;
   $('pre').hidden = false;
   $('during').hidden = true;
@@ -1023,16 +1154,23 @@ $('to-interview').onclick = () => {
   show('interview');
 };
 
+// Opening the sitting is identical for both formats bar the format field, and both must
+// stop dead if it fails: an answer filed against no sitting is silently lost.
+async function openSitting() {
+  const body = new FormData();
+  body.append('level', state.level);
+  body.append('questions', state.questions.length);
+  body.append('format', state.format);
+  if (state.topic) body.append('topic', state.topic);
+  state.assessment = (await post('/assessments', body)).id;
+}
+
 // ── 4. Interview ──────────────────────────────────────────────────────
 $('start').onclick = async () => {
   // Open the sitting first: every answer is filed against it, so a failure here has to
   // stop the interview rather than silently produce an unsaved one.
-  const body = new FormData();
-  body.append('level', state.level);
-  body.append('questions', state.questions.length);
-  if (state.topic) body.append('topic', state.topic);
   try {
-    state.assessment = (await post('/assessments', body)).id;
+    await openSitting();
   } catch (e) {
     $('pre-lede').textContent = `Could not start the interview: ${e.message}`;
     return;
@@ -1232,9 +1370,12 @@ let leaving = null;
 function askToSubmit(nextView = null) {
   leaving = nextView;
   const total = state.questions.length, done = answered();
+  $('confirm-blurb').textContent = state.format === 'mcq'
+    ? "This ends the assessment. Your picks are marked against the answer key, and you can't change them after this."
+    : "This ends the interview. Your answers are transcribed and graded, and you can't re-record after this.";
   $('tally').innerHTML = `
     <div><span>Questions</span><span>${total}</span></div>
-    <div><span>Recorded</span><span>${done}</span></div>
+    <div><span>${state.format === 'mcq' ? 'Answered' : 'Recorded'}</span><span>${done}</span></div>
     ${done < total ? `<div class="warn"><span>Unanswered (score 0)</span><span>${total - done}</span></div>` : ''}
     <div><span>Graded at</span><span>${escape(title(state.level))}</span></div>`;
   $('confirm-leaving').hidden = !nextView;
@@ -1273,6 +1414,7 @@ $('abandon').onclick = () => {
   state.assessment = null;
   state.takes.forEach(t => t && URL.revokeObjectURL(t.url));
   state.takes = [];
+  state.picks = [];
   state.questions = [];
   leaving = null;
   setPhase('standby');
@@ -1287,6 +1429,9 @@ window.addEventListener('beforeunload', e => {
 
 $('confirm-go').onclick = async () => {
   $('confirm').close();
+  // Both formats submit through this one button, because it is one dialog. MCQ has no
+  // uploads and no worker, so it has its own sender rather than a branch inside this one.
+  if (state.format === 'mcq') return submitMcq();
   $('during').hidden = true;
   $('grading').hidden = false;
   setPhase('standby');        // the interview is over
@@ -1350,6 +1495,131 @@ $('confirm-go').onclick = async () => {
   }
 };
 
+// ── 4b. MCQ ───────────────────────────────────────────────────────────
+// Picks are held in state.picks and sent only at submit. Nothing is marked before then, so
+// an answer can be changed right up until the set goes, and the browser never learns which
+// option was right — the route answers {recorded:true} either way.
+$('mcq-start').onclick = async () => {
+  try {
+    await openSitting();
+  } catch (e) {
+    $('mcq-pre').querySelector('.lede').textContent = `Could not start the assessment: ${e.message}`;
+    return;
+  }
+  $('mcq-pre').hidden = true;
+  $('mcq-during').hidden = false;
+  setPhase('live');
+  showMcq();
+};
+
+function showMcq() {
+  const q = state.questions[state.index];
+  $('mcq-tag').textContent = q.topic;
+  $('mcq-count').textContent = `Question ${state.index + 1} of ${state.questions.length}`;
+  $('mcq-level-tag').textContent = state.level;
+  $('mcq-question').textContent = q.text;
+  $('mcq-prev').disabled = state.index === 0;
+  $('mcq-next').disabled = state.index === state.questions.length - 1;
+
+  // One native radio per option: arrow keys, labels and screen readers all come free, and
+  // the name is per question so moving back and forth does not bleed a selection across.
+  $('mcq-options').innerHTML = q.options.map((opt, i) => `
+    <label>
+      <input type="radio" name="mcq-${state.index}" value="${i}"${state.picks[state.index] === i ? ' checked' : ''}>
+      <span class="pick">${'ABCD'[i]}</span>
+      <span>${escape(opt)}</span>
+    </label>`).join('');
+  $('mcq-options').querySelectorAll('input').forEach(input => input.onchange = () => {
+    state.picks[state.index] = Number(input.value);
+    $('mcq-status').textContent = 'Answer recorded. You can change it until you submit.';
+    buildMcqNav();
+    updateMcqFinish();
+  });
+
+  $('mcq-status').textContent = state.picks[state.index] === null
+    ? 'Pick the answer you think is right.'
+    : 'Answer recorded. You can change it until you submit.';
+  buildMcqNav();
+  updateMcqFinish();
+}
+
+function buildMcqNav() {
+  const answered = state.picks.filter(p => p !== null).length;
+  $('mcq-nav').innerHTML = state.questions.map((_, i) =>
+    `<button data-i="${i}" data-done="${state.picks[i] !== null}" aria-current="${i === state.index}">${i + 1}</button>`
+  ).join('') + `<span class="legend">${answered} of ${state.questions.length} answered</span>`;
+  $('mcq-nav').querySelectorAll('button').forEach(b => b.onclick = () => {
+    state.index = Number(b.dataset.i);
+    showMcq();
+  });
+}
+
+function updateMcqFinish() {
+  const answered = state.picks.filter(p => p !== null).length;
+  const missing = state.questions.length - answered;
+  $('mcq-finish-note').textContent = missing
+    ? `${missing} question${missing === 1 ? '' : 's'} unanswered — ${missing === 1 ? 'it scores' : 'they score'} zero.`
+    : 'Every question answered.';
+}
+
+$('mcq-prev').onclick = () => { state.index--; showMcq(); };
+$('mcq-next').onclick = () => { state.index++; showMcq(); };
+
+// Same dialog and same guard as the spoken flow — askToSubmit() already branches on format
+// for its wording and its tally, so there is nothing format-specific left to do here.
+$('mcq-finish').onclick = () => askToSubmit();
+
+// Marking is a request per pick rather than one batched call, because the route is the same
+// one a re-answer uses and it upserts — so a retry of a half-sent set is safe.
+async function submitMcq() {
+  $('mcq-during').hidden = true;
+  $('mcq-grading').hidden = false;
+  setPhase('standby');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  const picked = state.picks
+    .map((choice, i) => ({ choice, q: state.questions[i] }))
+    .filter(p => p.choice !== null);
+  const failures = [];
+  let sent = 0;
+
+  for (const { choice, q } of picked) {
+    const body = new FormData();
+    body.append('question_id', q.id);
+    body.append('choice', choice);
+    try {
+      await post(`/assessments/${state.assessment}/mcq`, body);
+      sent++;
+    } catch (e) {
+      failures.push(e.message);
+    }
+    $('mcq-bar-fill').style.width = `${Math.round((sent + failures.length) / picked.length * 100)}%`;
+    $('mcq-grading-status').textContent = `${sent + failures.length} of ${picked.length} sent`;
+  }
+
+  const sitting = state.assessment;
+  try {
+    await post(`/assessments/${sitting}/finish`, new FormData());
+  } catch (e) {
+    $('mcq-during').hidden = false;
+    $('mcq-grading').hidden = true;
+    setPhase('live');
+    $('mcq-status').textContent = `Your answers were sent but the assessment didn't close: ${e.message}. Submit again.`;
+    return;
+  }
+
+  // Cleared before the report opens, so the leave guard stops firing on a closed sitting.
+  state.assessment = null;
+  state.picks = [];
+  state.questions = [];
+  if (failures.length) {
+    $('history-lede').textContent = `${sent} of ${picked.length} answers were marked. ${failures[0]}`;
+    await openHistory();
+    return;
+  }
+  await openReport(sitting);
+}
+
 // ── 5. Report ─────────────────────────────────────────────────────────
 const tone = v => v >= 70 ? 'var(--pass)' : v >= 40 ? 'var(--amber)' : 'var(--live)';
 
@@ -1402,6 +1672,23 @@ function renderReport(results, sitting) {
       <div class="body"><p class="full">This answer couldn't be graded: ${escape(r.failed)}. It's left out of the overall score.</p></div></details>`;
 
     const d = r.report;
+    // An MCQ verdict carries the options and the key instead of the three parameters, so it
+    // renders as the answer sheet it is. The flag is on the report rather than the sitting
+    // because this is per answer, and it is what grade_choice() already writes.
+    if (d.format === 'mcq') {
+      const options = d.options.map((opt, oi) => {
+        const right = oi === d.correct, chose = oi === d.chosen;
+        const mark = right ? '✓' : chose ? '✗' : '';
+        const colour = right ? 'var(--pass)' : chose ? 'var(--live)' : 'var(--paper-dim)';
+        return `<li style="color:${colour}"><span class="pick">${'ABCD'[oi]}</span>
+          ${escape(opt)} <span class="mono-label">${mark}${chose ? ' your answer' : ''}</span></li>`;
+      }).join('');
+      return `<details class="item">${head(d.score, tone(d.score))}
+        <div class="body">
+          <ul class="notes">${options}</ul>
+          <div><h2>Why</h2><p class="say">${escape(d.explanation)}</p></div>
+        </div></details>`;
+    }
     return `<details class="item">${head(d.score, tone(d.score))}
       <div class="body">
         <div class="params">${PARAMS.map(n => param(d, n)).join('')}</div>
@@ -1419,9 +1706,11 @@ function renderReport(results, sitting) {
       </div></details>`;
   };
 
-  const allGaps = [...new Set(graded.flatMap(r => r.report.comments.gaps))].slice(0, 6);
-  const allWins = [...new Set(graded.flatMap(r => r.report.comments.strengths))].slice(0, 6);
-  const allErrors = graded.flatMap(r => r.report.errors);
+  // Optional-chained: an MCQ verdict has no comments or errors at all, and these are built
+  // before the template that decides whether to use them.
+  const allGaps = [...new Set(graded.flatMap(r => r.report.comments?.gaps ?? []))].slice(0, 6);
+  const allWins = [...new Set(graded.flatMap(r => r.report.comments?.strengths ?? []))].slice(0, 6);
+  const allErrors = graded.flatMap(r => r.report.errors ?? []);
   // An open sitting is reachable from the list too, and it has no finished_at yet.
   const when = sitting.finished_at ?? sitting.started_at;
   const stamp = new Date(`${when.replace(' ', 'T')}Z`).toLocaleString();
@@ -1445,18 +1734,25 @@ function renderReport(results, sitting) {
     return;
   }
 
+  // MCQ has no parameters, weights or judge commentary — the score is right or wrong. So
+  // the three-bar breakdown and the strengths/gaps columns are dropped rather than faked,
+  // and the per-question answer sheet below carries the detail instead.
+  const isMcq = graded[0]?.report.format === 'mcq';
+
   $('report').innerHTML = `
     <h1 class="big">${escape(state.candidate)}, here's how that went.</h1>
-    <p class="lede">${escape(state.topic || 'Every topic')} · graded at ${escape(state.level)} level ·
+    <p class="lede">${escape(state.topic || 'Every topic')} · ${isMcq ? 'multiple choice at' : 'graded at'} ${escape(state.level)} level ·
       ${graded.length} of ${results.length} answer${results.length === 1 ? '' : 's'} graded · ${escape(stamp)}</p>
 
     <div class="verdict">
       <span class="num" style="color:${tone(overall)}">${overall}</span><span class="of">/ 100</span>
       <span class="read" style="color:${tone(overall)}">${read}<br>
-        <span class="count">average across ${graded.length} question${graded.length === 1 ? '' : 's'}</span></span>
+        <span class="count">${isMcq
+          ? `${graded.filter(r => r.report.score === 100).length} of ${graded.length} correct`
+          : `average across ${graded.length} question${graded.length === 1 ? '' : 's'}`}</span></span>
     </div>
 
-    <div><h2>Across the whole interview</h2>
+    ${isMcq ? '' : `<div><h2>Across the whole interview</h2>
       <div class="params">${PARAMS.map(n => bar(n, avg(n), weights[n])).join('')}</div></div>
 
     <div class="cols">
@@ -1465,7 +1761,7 @@ function renderReport(results, sitting) {
     </div>
 
     ${allErrors.length ? `<div><h2>Incorrect claims across all answers</h2>
-      <ul class="wrong">${allErrors.map(e => `<li>${escape(e)}</li>`).join('')}</ul></div>` : ''}
+      <ul class="wrong">${allErrors.map(e => `<li>${escape(e)}</li>`).join('')}</ul></div>` : ''}`}
 
     ${pending.length ? `<p class="none">${pending.length} answer${pending.length === 1 ? ' is' : 's are'}
       still being graded, so this average will move.</p>` : ''}

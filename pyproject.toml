@@ -32,6 +32,9 @@ packages = ["app", "src"]
 # practice.db in with its accounts. tests/test_packaging.py fails the build if it ever does.
 [tool.hatch.build.targets.wheel.force-include]
 "data/questions.json" = "data/questions.json"
+# The generated MCQ bank. Same reason as the audio: an installed copy cannot re-run the
+# build step without a token, so the answer key ships with the wheel.
+"data/mcq.json" = "data/mcq.json"
 "src/db/schema.sql" = "src/db/schema.sql"
 # The spoken bank. A directory is safe here where data/ would not be: it holds only
 # generated .opus files, never the database. Whatever `python -m src.helpers.speech` has

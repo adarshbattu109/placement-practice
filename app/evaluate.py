@@ -124,6 +124,31 @@ def evaluate(transcript, question, ideal_answer, level="advanced"):
     }
 
 
+def grade_choice(question, choice):
+    """Mark one pick from a `store.mcq_row()`. No model, no network — an index comparison.
+
+    Returns `evaluate()`'s shape so the report renders one structure for both formats, with
+    `weights` and `parameters` absent rather than faked. 100 or 0 is what makes
+    `finish_assessment()` yield percentage correct with no new aggregate.
+    """
+    options = question["options"]
+    # Bounds here rather than in the route: an unchecked index would read `options[-1]` as a
+    # silently valid pick, and the route is not the only caller this function can ever have.
+    if not isinstance(choice, int) or not 0 <= choice < len(options):
+        raise ValueError(f"Choice {choice!r} is not one of 0-{len(options) - 1}.")
+
+    return {
+        "transcript": options[choice],
+        "score": 100 if choice == question["correct"] else 0,
+        "level": question["level"],
+        "format": "mcq",
+        "chosen": choice,
+        "correct": question["correct"],
+        "options": options,
+        "explanation": question["explanation"],
+    }
+
+
 def demo():
     """Self-check: parsing and per-level weighting, with the judge stubbed out.
 
@@ -153,7 +178,8 @@ def demo():
             pass
 
     real = _judge
-    _judge = lambda t, q, i, level: {
+    # Stubbing the remote call is the point; ty reads any rebind of a `def` as a type error.
+    _judge = lambda t, q, i, level: {  # ty: ignore[invalid-assignment]
         "completeness": {"score": 90, "note": "n"},
         "correctness": {"score": 30, "note": "n", "errors": ["said O(n) for average lookup"]},
         "relevance": {"score": 90, "note": "n"},
@@ -188,11 +214,44 @@ def demo():
     assert r["level"] == "expert" and r["weights"] == LEVELS["expert"]["weights"]
     assert blank["score"] == 0 and blank["parameters"]["correctness"]["score"] == 0
     assert blank["weights"] == LEVELS["beginner"]["weights"]
+
+    picked = _check_choice()
     print(
         "ok — "
         + " ".join(f"{k}={v['score']}" for k, v in scored.items())
-        + f" empty={blank['score']}"
+        + f" empty={blank['score']} mcq={picked}"
     )
+
+
+def _check_choice():
+    """`grade_choice` is 100/0 on the key and refuses anything that is not a valid index."""
+    question = {
+        "id": "dsa-1-advanced",
+        "text": "Which of these is the average-case lookup cost of a hash map?",
+        "level": "advanced",
+        "options": ["O(1)", "O(log n)", "O(n)", "O(n log n)"],
+        "correct": 0,
+        "explanation": "Constant on average; O(n) only when every key collides.",
+    }
+    right = grade_choice(question, 0)
+    wrong = grade_choice(question, 2)
+    assert right["score"] == 100 and wrong["score"] == 0, (right["score"], wrong["score"])
+    # Same column meaning as the spoken path: what the candidate conveyed, not an index.
+    assert right["transcript"] == "O(1)" and wrong["transcript"] == "O(n)", wrong["transcript"]
+    assert right["chosen"] == 0 and wrong["chosen"] == 2
+    assert wrong["correct"] == 0 and wrong["explanation"] == question["explanation"]
+    assert wrong["options"] == question["options"] and wrong["level"] == "advanced"
+    assert wrong["format"] == "mcq", "the report screen branches on this"
+
+    # A negative index would otherwise read as a valid option, and the route turns this
+    # ValueError into the 400 — nothing above here knows what an HTTP status is.
+    for bad in (-1, 4, 99, None, "0", 1.0):
+        try:
+            grade_choice(question, bad)
+            raise AssertionError(f"should have rejected choice {bad!r}")
+        except ValueError:
+            pass
+    return f"{right['score']}/{wrong['score']}"
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import zipfile
 
 from src.constants.filepaths import AUDIO_DIR, ROOT
 
-SHIPPED = ("data/questions.json", "src/db/schema.sql", "app/index.html")
+SHIPPED = ("data/questions.json", "data/mcq.json", "src/db/schema.sql", "app/index.html")
 
 
 def check():

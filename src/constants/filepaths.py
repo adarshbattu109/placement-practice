@@ -9,6 +9,7 @@ INDEX_HTML = APP_DIR / "index.html"
 
 DATA_DIR = ROOT / "data"
 QUESTIONS_JSON = DATA_DIR / "questions.json"
+MCQ_JSON = DATA_DIR / "mcq.json"  # generated options, committed so the answer key is reviewed
 AUDIO_DIR = DATA_DIR / "audio"  # spoken questions, generated once at build time
 DB_PATH = DATA_DIR / "practice.db"
 

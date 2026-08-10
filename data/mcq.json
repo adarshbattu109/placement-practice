@@ -1,0 +1,947 @@
+[
+  {
+    "id": "dsa-1-beginner",
+    "source_id": "dsa-1",
+    "topic": "DSA",
+    "level": "beginner",
+    "text": "What happens when two keys in a hash map produce the same index?",
+    "options": [
+      "The hash map refuses to store the second key",
+      "The hash map automatically deletes the first key",
+      "The hash map uses a secondary data structure to store both keys",
+      "The hash map only stores the last key"
+    ],
+    "correct": 2,
+    "explanation": "You are correct because when two keys collide, the hash map uses a secondary data structure such as a linked list or tree to store both keys, allowing for efficient lookup and retrieval of the associated values."
+  },
+  {
+    "id": "dsa-1-advanced",
+    "source_id": "dsa-1",
+    "topic": "DSA",
+    "level": "advanced",
+    "text": "A hash map with separate chaining has a load factor that keeps rising. What degrades first, and why?",
+    "options": [
+      "Lookup cost, because chains grow longer and each one is scanned linearly",
+      "Insert cost, because the hash function slows down as the table fills",
+      "Memory only, since chaining never affects the time complexity of a lookup",
+      "Deletion cost, because removing a key forces every later key to be rehashed"
+    ],
+    "correct": 0,
+    "explanation": "You are right that lookups degrade first: with chaining the buckets stay addressable in constant time, but each holds a longer list, so the scan within a bucket is what turns O(1) into O(n) at the limit."
+  },
+  {
+    "id": "dsa-1-expert",
+    "source_id": "dsa-1",
+    "topic": "DSA",
+    "level": "expert",
+    "text": "Why does open addressing with linear probing suffer badly from primary clustering, where chaining does not?",
+    "options": [
+      "Because linear probing must rehash the whole table on every collision",
+      "Because occupied runs merge, so any key hashing into a run pays the full length of it",
+      "Because linear probing cannot support deletion under any scheme",
+      "Because the load factor of an open-addressed table can never exceed 0.5"
+    ],
+    "correct": 1,
+    "explanation": "You identified the real mechanism: adjacent occupied slots coalesce into runs, and a key landing anywhere in a run probes to its end, so clusters grow superlinearly in a way per-bucket chains never do."
+  },
+  {
+    "id": "dsa-2-beginner",
+    "source_id": "dsa-2",
+    "topic": "DSA",
+    "level": "beginner",
+    "text": "To keep the k largest numbers from a long stream, which structure do you maintain?",
+    "options": [
+      "A min heap of size k",
+      "A max heap holding every element seen",
+      "A sorted array of every element seen",
+      "A queue of the k most recent elements"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: a min heap of size k keeps the smallest of your current best at the top, so it is the one to evict when a larger number arrives."
+  },
+  {
+    "id": "dsa-2-advanced",
+    "source_id": "dsa-2",
+    "topic": "DSA",
+    "level": "advanced",
+    "text": "Why is a min heap of size k preferred over sorting the stream, for n elements with k much smaller than n?",
+    "options": [
+      "Sorting is O(n log n) time and O(n) space; the heap is O(n log k) time and O(k) space",
+      "Sorting cannot be applied to numeric data arriving in a stream",
+      "The heap gives the k largest in sorted order, which sorting does not",
+      "Sorting is O(n squared) in every practical implementation"
+    ],
+    "correct": 0,
+    "explanation": "You have the tradeoff right: the heap never holds more than k elements, so it bounds memory by k rather than n, and each of the n elements costs at most log k rather than log n."
+  },
+  {
+    "id": "dsa-2-expert",
+    "source_id": "dsa-2",
+    "topic": "DSA",
+    "level": "expert",
+    "text": "Quickselect finds the k largest in O(n) average time, beating the heap's O(n log k). Why is the heap still the right choice for a stream?",
+    "options": [
+      "Quickselect has a worse average constant factor than heap operations",
+      "Quickselect needs random access to the whole dataset, which a stream does not provide",
+      "Quickselect cannot handle duplicate values correctly",
+      "Quickselect is O(n) only when the data is already partially sorted"
+    ],
+    "correct": 1,
+    "explanation": "You spotted the constraint that decides it: quickselect partitions in place over a materialised array, so it needs all n elements at once, while a stream is single-pass and may not fit in memory at all."
+  },
+  {
+    "id": "dsa-3-beginner",
+    "source_id": "dsa-3",
+    "topic": "DSA",
+    "level": "beginner",
+    "text": "In Floyd's cycle detection, how do the two pointers move through the linked list?",
+    "options": [
+      "Both move one node at a time, starting from opposite ends",
+      "One moves one node at a time, the other moves two",
+      "Both move two nodes at a time, one starting a node ahead",
+      "One moves forward while the other moves backward"
+    ],
+    "correct": 1,
+    "explanation": "You are correct: the slow pointer advances one node and the fast pointer two, so if a cycle exists the fast pointer laps the slow one and they meet."
+  },
+  {
+    "id": "dsa-3-advanced",
+    "source_id": "dsa-3",
+    "topic": "DSA",
+    "level": "advanced",
+    "text": "After the two pointers meet inside the cycle, how do you find the node where the cycle begins?",
+    "options": [
+      "Move both pointers one step at a time from the meeting point",
+      "Reset one pointer to the head, then advance both one step at a time until they meet",
+      "Count the cycle length, then walk that many nodes from the head",
+      "Reset both pointers to the head and repeat with a larger step size"
+    ],
+    "correct": 1,
+    "explanation": "You have the standard second phase: the distance from the head to the cycle start equals the distance from the meeting point to the cycle start, so two pointers moving at equal speed from those two places meet exactly at the entry."
+  },
+  {
+    "id": "dsa-3-expert",
+    "source_id": "dsa-3",
+    "topic": "DSA",
+    "level": "expert",
+    "text": "Why does Floyd's algorithm use a step ratio of 1 and 2 rather than 1 and 3?",
+    "options": [
+      "A ratio of 1 and 3 fails to detect cycles of even length",
+      "A ratio of 1 and 2 closes the gap by exactly one node per iteration, so it cannot skip over the slow pointer",
+      "A ratio of 1 and 3 would make the algorithm O(n squared)",
+      "Only a ratio of 1 and 2 keeps the memory usage constant"
+    ],
+    "correct": 1,
+    "explanation": "You identified the invariant: with speeds 1 and 2 the separation shrinks by exactly one each step, so a meeting is guaranteed, and the head-to-entry distance identity the second phase relies on falls out of that same ratio."
+  },
+  {
+    "id": "dsa-4-beginner",
+    "source_id": "dsa-4",
+    "topic": "DSA",
+    "level": "beginner",
+    "text": "What does memoisation add to a plain recursive solution?",
+    "options": [
+      "It caches results of subproblems so each one is computed once",
+      "It converts the recursion into a loop automatically",
+      "It reduces the memory the recursion needs",
+      "It guarantees the recursion will not exceed the stack depth"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: memoisation stores each subproblem's answer the first time it is computed, so repeated calls with the same arguments return immediately instead of recomputing the whole subtree."
+  },
+  {
+    "id": "dsa-4-advanced",
+    "source_id": "dsa-4",
+    "topic": "DSA",
+    "level": "advanced",
+    "text": "Which pair of properties tells you a problem is a candidate for dynamic programming?",
+    "options": [
+      "Optimal substructure and overlapping subproblems",
+      "Optimal substructure and a greedy choice property",
+      "Overlapping subproblems and a sorted input",
+      "A recursive formulation and a bounded input size"
+    ],
+    "correct": 0,
+    "explanation": "You named both conditions: the optimum must be constructible from optima of subproblems, and those subproblems must recur, or caching them buys nothing."
+  },
+  {
+    "id": "dsa-4-expert",
+    "source_id": "dsa-4",
+    "topic": "DSA",
+    "level": "expert",
+    "text": "A problem has optimal substructure but no overlapping subproblems. What does that imply?",
+    "options": [
+      "Dynamic programming still halves the running time",
+      "Divide and conquer fits, and a memo table adds overhead without saving work",
+      "The problem cannot be solved recursively at all",
+      "A greedy algorithm is guaranteed to be correct"
+    ],
+    "correct": 1,
+    "explanation": "You drew the right line: merge sort has optimal substructure and no repeated subproblems, so it is divide and conquer. Without recurrence there is nothing for the table to reuse, and it costs memory for no gain."
+  },
+  {
+    "id": "sd-1-beginner",
+    "source_id": "sd-1",
+    "topic": "System Design",
+    "level": "beginner",
+    "text": "In a URL shortener, what is the core operation when a user visits a short link?",
+    "options": [
+      "Look up the short code and redirect to the original URL",
+      "Re-hash the short code to reconstruct the original URL",
+      "Search every stored URL for a matching prefix",
+      "Ask the client to supply the original URL for verification"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: the short code is a key, the service looks up the long URL it maps to, and answers with an HTTP redirect."
+  },
+  {
+    "id": "sd-1-advanced",
+    "source_id": "sd-1",
+    "topic": "System Design",
+    "level": "advanced",
+    "text": "Why is a hash of the long URL, truncated to seven characters, a risky way to mint short codes?",
+    "options": [
+      "Truncation makes the code impossible to look up efficiently",
+      "Truncating a hash reintroduces collisions, so two different URLs can claim the same code",
+      "Hashes are too slow to compute at write time",
+      "Hash output cannot be encoded in a URL-safe alphabet"
+    ],
+    "correct": 1,
+    "explanation": "You spotted the failure: a truncated hash has a small output space, so by the birthday bound collisions appear far earlier than intuition suggests, and a collision silently sends users to the wrong destination unless you check and retry."
+  },
+  {
+    "id": "sd-1-expert",
+    "source_id": "sd-1",
+    "topic": "System Design",
+    "level": "expert",
+    "text": "You use a counter encoded in base62 for short codes. What is the main operational drawback at scale?",
+    "options": [
+      "Base62 codes cannot be made shorter than ten characters",
+      "A single global counter is a write bottleneck and leaks your total link count",
+      "Counter-based codes cannot be stored in a relational database",
+      "Sequential codes make cache hit rates worse than random ones"
+    ],
+    "correct": 1,
+    "explanation": "You caught both halves: every write must serialise through one counter unless you shard ranges, and because codes are sequential anyone can decode two links to learn how many you have issued between them."
+  },
+  {
+    "id": "sd-2-beginner",
+    "source_id": "sd-2",
+    "topic": "System Design",
+    "level": "beginner",
+    "text": "What distinguishes horizontal scaling from vertical scaling?",
+    "options": [
+      "Horizontal adds more machines; vertical adds more resources to one machine",
+      "Horizontal adds more resources to one machine; vertical adds more machines",
+      "Horizontal applies to databases only; vertical applies to application servers only",
+      "Horizontal reduces cost; vertical always increases it"
+    ],
+    "correct": 0,
+    "explanation": "You have it the right way round: scaling out means more nodes behind a load balancer, scaling up means a bigger box."
+  },
+  {
+    "id": "sd-2-advanced",
+    "source_id": "sd-2",
+    "topic": "System Design",
+    "level": "advanced",
+    "text": "What must change in your application design before horizontal scaling actually works?",
+    "options": [
+      "Requests must be stateless, or session state must move to shared storage",
+      "The database must be switched to NoSQL",
+      "All endpoints must be made asynchronous",
+      "The application must be rewritten in a compiled language"
+    ],
+    "correct": 0,
+    "explanation": "You named the precondition: if a node holds session state in memory, a user's next request landing on a different node loses it, so state moves to a shared store or into a signed token."
+  },
+  {
+    "id": "sd-2-expert",
+    "source_id": "sd-2",
+    "topic": "System Design",
+    "level": "expert",
+    "text": "Your stateless web tier scales out cleanly, but throughput plateaus anyway. What is the most likely cause?",
+    "options": [
+      "The load balancer cannot distribute beyond a fixed number of nodes",
+      "A shared downstream dependency, typically the primary database, has become the bottleneck",
+      "Stateless services degrade as node count rises",
+      "Horizontal scaling stops working above a certain request rate"
+    ],
+    "correct": 1,
+    "explanation": "You followed the bottleneck: scaling the tier you can scale just moves the constraint downstream, and the single writable database is usually where it lands, which is what pushes you toward read replicas, caching or sharding."
+  },
+  {
+    "id": "sd-3-beginner",
+    "source_id": "sd-3",
+    "topic": "System Design",
+    "level": "beginner",
+    "text": "What do the three letters of the CAP theorem stand for?",
+    "options": [
+      "Consistency, Availability, Partition tolerance",
+      "Capacity, Availability, Performance",
+      "Consistency, Atomicity, Persistence",
+      "Concurrency, Availability, Partitioning"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: consistency, availability and partition tolerance are the three properties the theorem relates."
+  },
+  {
+    "id": "sd-3-advanced",
+    "source_id": "sd-3",
+    "topic": "System Design",
+    "level": "advanced",
+    "text": "For a payments system facing a network partition, which tradeoff is appropriate and why?",
+    "options": [
+      "Choose availability, because a declined payment is worse than a wrong balance",
+      "Choose consistency, because serving a stale balance risks double-spending money",
+      "Choose partition tolerance over both, since it can be traded away independently",
+      "Choose availability, because payment systems are not affected by stale reads"
+    ],
+    "correct": 1,
+    "explanation": "You made the right call: money must not be created or spent twice, so a payments path refuses to serve rather than serve a balance it cannot vouch for."
+  },
+  {
+    "id": "sd-3-expert",
+    "source_id": "sd-3",
+    "topic": "System Design",
+    "level": "expert",
+    "text": "Why is describing a distributed system as simply choosing 'CP' or 'AP' an oversimplification?",
+    "options": [
+      "The tradeoff only applies during an actual partition; the rest of the time the real tension is latency against consistency",
+      "Partition tolerance is optional in any system inside one datacentre",
+      "Modern consensus protocols provide all three properties simultaneously",
+      "CAP applies only to relational databases, not to distributed key-value stores"
+    ],
+    "correct": 0,
+    "explanation": "You are pointing at what PACELC formalises: partitions are rare, and in their absence the live decision is how much latency you will pay for stronger consistency, which the CAP label alone hides."
+  },
+  {
+    "id": "sd-4-beginner",
+    "source_id": "sd-4",
+    "topic": "System Design",
+    "level": "beginner",
+    "text": "What is the purpose of a rate limiter on a public API?",
+    "options": [
+      "To cap how many requests a client can make in a time window",
+      "To compress responses so they transfer faster",
+      "To distribute requests evenly across backend servers",
+      "To authenticate clients before they reach the application"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: a rate limiter bounds request volume per client per window, protecting the service from abuse and from one caller starving the rest."
+  },
+  {
+    "id": "sd-4-advanced",
+    "source_id": "sd-4",
+    "topic": "System Design",
+    "level": "advanced",
+    "text": "What problem does a fixed window counter have that a sliding window or token bucket avoids?",
+    "options": [
+      "It cannot support different limits for different clients",
+      "A client can send a full window's quota either side of the boundary, doubling the intended rate",
+      "It requires storing every individual request timestamp",
+      "It cannot be implemented without a distributed lock"
+    ],
+    "correct": 1,
+    "explanation": "You found the boundary burst: with a fixed window, the quota resets abruptly, so requests bunched at the end of one window and the start of the next pass a limiter that was meant to smooth them."
+  },
+  {
+    "id": "sd-4-expert",
+    "source_id": "sd-4",
+    "topic": "System Design",
+    "level": "expert",
+    "text": "Across a fleet of API nodes, why is per-node rate limiting with a shared counter in Redis still imperfect?",
+    "options": [
+      "Redis cannot store counters with expiry",
+      "Read-then-write on the counter races between nodes unless the update is atomic, and the network hop adds latency to every request",
+      "Redis counters lose precision above a few thousand requests per second",
+      "Per-node limiting always rejects more traffic than intended"
+    ],
+    "correct": 1,
+    "explanation": "You identified both costs: a non-atomic check-then-increment lets concurrent nodes each see the same under-limit value, which is why the increment and comparison belong in one atomic operation or Lua script, and every request now depends on a network round trip."
+  },
+  {
+    "id": "be-1-beginner",
+    "source_id": "be-1",
+    "topic": "Backend",
+    "level": "beginner",
+    "text": "What is the clearest structural difference between a relational and a document database?",
+    "options": [
+      "Relational stores rows in tables with a fixed schema; document stores flexible documents",
+      "Relational databases cannot be queried with an index",
+      "Document databases cannot store numbers, only text",
+      "Relational databases keep data in memory; document databases keep it on disk"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: the relational model fixes a schema over rows and columns, while a document store keeps self-describing records whose shape can vary."
+  },
+  {
+    "id": "be-1-advanced",
+    "source_id": "be-1",
+    "topic": "Backend",
+    "level": "advanced",
+    "text": "Your data is highly relational with many-to-many joins, and correctness matters more than write throughput. Which fits and why?",
+    "options": [
+      "A document store, because denormalised documents make joins unnecessary",
+      "A relational database, because joins and transactional integrity are what it is built for",
+      "A key-value store, because it offers the lowest possible latency",
+      "Either, because the choice has no effect once data volume is large"
+    ],
+    "correct": 1,
+    "explanation": "You matched the workload to the tool: joins across many-to-many relationships and multi-row invariants are exactly what a relational engine with ACID transactions handles natively."
+  },
+  {
+    "id": "be-1-expert",
+    "source_id": "be-1",
+    "topic": "Backend",
+    "level": "expert",
+    "text": "Teams often denormalise into documents to avoid joins. What cost does that shift onto the application?",
+    "options": [
+      "Reads become slower because documents are larger",
+      "Duplicated data must be updated in every copy, so consistency becomes the application's responsibility",
+      "The database can no longer enforce uniqueness on any field",
+      "Documents cannot be indexed on nested fields"
+    ],
+    "correct": 1,
+    "explanation": "You named the real trade: denormalisation buys read locality at the price of write amplification, and with no foreign keys the burden of keeping copies agreeing moves into your code."
+  },
+  {
+    "id": "be-2-beginner",
+    "source_id": "be-2",
+    "topic": "Backend",
+    "level": "beginner",
+    "text": "What is the first step after a browser is given a URL with a hostname it has not seen before?",
+    "options": [
+      "A DNS lookup to resolve the hostname to an IP address",
+      "A TLS handshake with the hostname",
+      "Sending the HTTP GET request directly to the hostname",
+      "Opening a TCP connection to the hostname string"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: the transport layer needs an IP address, so the name must be resolved through DNS before any connection can be opened."
+  },
+  {
+    "id": "be-2-advanced",
+    "source_id": "be-2",
+    "topic": "Backend",
+    "level": "advanced",
+    "text": "In what order do these occur for a fresh HTTPS request?",
+    "options": [
+      "DNS resolution, TCP handshake, TLS handshake, HTTP request",
+      "TCP handshake, DNS resolution, HTTP request, TLS handshake",
+      "TLS handshake, DNS resolution, TCP handshake, HTTP request",
+      "DNS resolution, TLS handshake, TCP handshake, HTTP request"
+    ],
+    "correct": 0,
+    "explanation": "You have the layering right: resolve the name, establish the TCP connection, negotiate TLS over it, then send the HTTP request inside the encrypted channel."
+  },
+  {
+    "id": "be-2-expert",
+    "source_id": "be-2",
+    "topic": "Backend",
+    "level": "expert",
+    "text": "Why does HTTP/2 multiplexing not eliminate head-of-line blocking entirely?",
+    "options": [
+      "HTTP/2 still limits each connection to one request at a time",
+      "A lost TCP segment stalls every multiplexed stream, because TCP delivers bytes in order",
+      "HTTP/2 streams are processed strictly sequentially by the server",
+      "Multiplexing only works when all responses are the same size"
+    ],
+    "correct": 1,
+    "explanation": "You located the blocking one layer down: HTTP/2 removes it at the application layer, but all streams share one TCP connection whose in-order delivery means a single lost packet stalls them all, which is what QUIC was designed to fix."
+  },
+  {
+    "id": "be-3-beginner",
+    "source_id": "be-3",
+    "topic": "Backend",
+    "level": "beginner",
+    "text": "What does it mean for an API endpoint to be idempotent?",
+    "options": [
+      "Repeating the same request has the same effect as making it once",
+      "The endpoint always returns the same response body",
+      "The endpoint never modifies any stored data",
+      "The endpoint can be called by multiple clients at the same time"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: idempotence is about the effect on state, so a retried request must not apply the change twice."
+  },
+  {
+    "id": "be-3-advanced",
+    "source_id": "be-3",
+    "topic": "Backend",
+    "level": "advanced",
+    "text": "How does an idempotency key make a payment endpoint safe to retry?",
+    "options": [
+      "The server stores the key with the result and returns the stored result if the key is seen again",
+      "The server rejects any request carrying a previously used key",
+      "The client uses the key to encrypt the request body",
+      "The key tells the server how long to wait before retrying"
+    ],
+    "correct": 0,
+    "explanation": "You described the mechanism exactly: the first request commits and records its outcome against the key, so a retry after a lost response replays the same answer rather than charging again."
+  },
+  {
+    "id": "be-3-expert",
+    "source_id": "be-3",
+    "topic": "Backend",
+    "level": "expert",
+    "text": "Two identical requests with the same idempotency key arrive concurrently. What is required for correctness?",
+    "options": [
+      "Rely on the client to serialise its own retries",
+      "Insert the key under a uniqueness constraint in the same transaction as the effect, so the second is rejected or waits",
+      "Compare request bodies and drop the later one",
+      "Add a short delay before processing any request carrying a key"
+    ],
+    "correct": 1,
+    "explanation": "You caught the race: checking for the key and then acting leaves a window where both requests see it absent, so the key insert and the state change must commit atomically for the database to reject the loser."
+  },
+  {
+    "id": "be-4-beginner",
+    "source_id": "be-4",
+    "topic": "Backend",
+    "level": "beginner",
+    "text": "An endpoint has become slow in production. What is the most useful first step?",
+    "options": [
+      "Look at metrics and logs to find where the time is actually spent",
+      "Add more application servers immediately",
+      "Rewrite the endpoint's slowest-looking function",
+      "Increase the client's request timeout"
+    ],
+    "correct": 0,
+    "explanation": "You started with measurement: without knowing which stage consumes the time, any change is a guess that may not touch the real cause."
+  },
+  {
+    "id": "be-4-advanced",
+    "source_id": "be-4",
+    "topic": "Backend",
+    "level": "advanced",
+    "text": "The endpoint got slower after a feature that lists orders with their customer. Which cause should you suspect first?",
+    "options": [
+      "An N+1 query, issuing one customer query per order returned",
+      "The JSON serialiser has become slower with more fields",
+      "TLS termination is now costing more per request",
+      "The load balancer is routing requests unevenly"
+    ],
+    "correct": 0,
+    "explanation": "You picked the classic regression for that shape of change: iterating results and lazily loading a relation turns one query into one per row, so latency scales with result size."
+  },
+  {
+    "id": "be-4-expert",
+    "source_id": "be-4",
+    "topic": "Backend",
+    "level": "expert",
+    "text": "Median latency is unchanged but p99 has doubled. What does that pattern point to?",
+    "options": [
+      "A uniform slowdown affecting every request equally",
+      "Contention affecting a subset of requests, such as lock waits, GC pauses or connection pool exhaustion",
+      "An increase in total request volume with no other change",
+      "A misconfigured client timeout"
+    ],
+    "correct": 1,
+    "explanation": "You read the distribution correctly: a uniform cause moves the median too, so an unchanged median with a heavier tail means most requests are fine and a minority are queueing behind something contended."
+  },
+  {
+    "id": "fe-1-beginner",
+    "source_id": "fe-1",
+    "topic": "Frontend",
+    "level": "beginner",
+    "text": "How many threads execute JavaScript in a browser tab by default?",
+    "options": [
+      "One",
+      "Two, one for rendering and one for scripts",
+      "One per open connection",
+      "As many as the number of CPU cores"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: JavaScript runs on a single main thread, which is why blocking it freezes rendering and input until the current task finishes."
+  },
+  {
+    "id": "fe-1-advanced",
+    "source_id": "fe-1",
+    "topic": "Frontend",
+    "level": "advanced",
+    "text": "A promise callback and a setTimeout callback both become ready during the same task. Which runs first?",
+    "options": [
+      "The setTimeout callback, because timers have priority",
+      "The promise callback, because the microtask queue drains before the next macrotask",
+      "Whichever was scheduled first, in registration order",
+      "They run concurrently on separate threads"
+    ],
+    "correct": 1,
+    "explanation": "You have the ordering right: after each task the engine empties the entire microtask queue, where promise reactions live, before taking the next macrotask such as a timer callback."
+  },
+  {
+    "id": "fe-1-expert",
+    "source_id": "fe-1",
+    "topic": "Frontend",
+    "level": "expert",
+    "text": "Why can a promise chain that recursively schedules more microtasks starve rendering?",
+    "options": [
+      "Microtasks run at a higher operating system thread priority than rendering",
+      "The microtask queue must be fully drained before the browser can paint, so a self-refilling queue never yields",
+      "Rendering is blocked whenever any promise is pending",
+      "Microtasks force a synchronous layout on every resolution"
+    ],
+    "correct": 1,
+    "explanation": "You identified the starvation: each microtask can enqueue another, and the drain continues until the queue is empty, so the loop never reaches the point where the browser would paint."
+  },
+  {
+    "id": "fe-2-beginner",
+    "source_id": "fe-2",
+    "topic": "Frontend",
+    "level": "beginner",
+    "text": "Which change most directly reduces the time until a page first renders?",
+    "options": [
+      "Reducing the size of render-blocking CSS and JavaScript",
+      "Adding more comments to the HTML for clarity",
+      "Increasing the server's response timeout",
+      "Moving images to a larger resolution"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: the browser cannot paint until it has processed render-blocking resources, so shrinking or deferring them shortens the path to first render."
+  },
+  {
+    "id": "fe-2-advanced",
+    "source_id": "fe-2",
+    "topic": "Frontend",
+    "level": "advanced",
+    "text": "What does adding the `defer` attribute to a script tag change?",
+    "options": [
+      "The script downloads in parallel and executes after HTML parsing completes",
+      "The script downloads and executes immediately, pausing the parser",
+      "The script is skipped entirely on slow connections",
+      "The script executes before the HTML parser starts"
+    ],
+    "correct": 0,
+    "explanation": "You have it: `defer` keeps the download off the critical path and delays execution until parsing is done, preserving document order between deferred scripts, unlike `async` which runs as soon as it arrives."
+  },
+  {
+    "id": "fe-2-expert",
+    "source_id": "fe-2",
+    "topic": "Frontend",
+    "level": "expert",
+    "text": "A page scores well on load time but poorly on Cumulative Layout Shift. What is the usual cause?",
+    "options": [
+      "JavaScript bundles are too large",
+      "Images or embeds without reserved dimensions, so content reflows once they load",
+      "The server's time to first byte is too high",
+      "Too many DNS lookups during page load"
+    ],
+    "correct": 1,
+    "explanation": "You separated the metrics correctly: CLS measures visual stability, not speed, and it is driven by elements that arrive without space reserved for them, pushing already-rendered content around."
+  },
+  {
+    "id": "fe-3-beginner",
+    "source_id": "fe-3",
+    "topic": "Frontend",
+    "level": "beginner",
+    "text": "What is the virtual DOM?",
+    "options": [
+      "An in-memory representation of the UI that is compared against the previous one",
+      "A browser API for updating the page without JavaScript",
+      "A separate rendering thread provided by the browser",
+      "A compressed copy of the HTML sent by the server"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: it is a plain in-memory tree that the framework diffs against the previous version to work out the minimal set of real DOM updates."
+  },
+  {
+    "id": "fe-3-advanced",
+    "source_id": "fe-3",
+    "topic": "Frontend",
+    "level": "advanced",
+    "text": "Is the virtual DOM faster than direct DOM manipulation?",
+    "options": [
+      "Yes, diffing in memory is always faster than touching the real DOM",
+      "No, hand-written optimal DOM updates are faster; the virtual DOM trades some speed for a simpler programming model",
+      "Yes, because it bypasses the browser's layout engine",
+      "No, because it re-renders the entire page on every state change"
+    ],
+    "correct": 1,
+    "explanation": "You resisted the myth: diffing is overhead on top of the same DOM writes, and its value is that you get near-optimal updates from declarative code rather than maintaining imperative patches by hand."
+  },
+  {
+    "id": "fe-3-expert",
+    "source_id": "fe-3",
+    "topic": "Frontend",
+    "level": "expert",
+    "text": "Why does using array indices as keys in a reordered list cause bugs?",
+    "options": [
+      "Indices are not unique across sibling elements",
+      "The index of an item changes when the list reorders, so the diff matches the wrong elements and reuses their state",
+      "Index keys prevent the framework from reusing any DOM node",
+      "Keys must be strings, and numeric indices are rejected"
+    ],
+    "correct": 1,
+    "explanation": "You explained the mismatch: the key must identify the item, not the position. When positions shift, index keys make the reconciler pair up unrelated items, so component state and uncontrolled inputs follow the wrong row."
+  },
+  {
+    "id": "ml-1-beginner",
+    "source_id": "ml-1",
+    "topic": "ML / Data Science",
+    "level": "beginner",
+    "text": "A model performs poorly on both training and test data. What does this indicate?",
+    "options": [
+      "High bias, meaning the model underfits",
+      "High variance, meaning the model overfits",
+      "The test set is too small",
+      "The features have been scaled incorrectly"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: failing on the training data itself means the model is too simple to capture the pattern, which is underfitting driven by bias."
+  },
+  {
+    "id": "ml-1-advanced",
+    "source_id": "ml-1",
+    "topic": "ML / Data Science",
+    "level": "advanced",
+    "text": "Training error is very low and validation error is much higher. What is the appropriate response?",
+    "options": [
+      "Increase model capacity so it can fit the validation set too",
+      "Reduce variance, through regularisation, more data, or a simpler model",
+      "Lower the learning rate and train for more epochs",
+      "Swap the training and validation sets"
+    ],
+    "correct": 1,
+    "explanation": "You diagnosed overfitting and matched the remedy: the gap between the two errors is variance, so constrain the model or give it more data rather than adding capacity."
+  },
+  {
+    "id": "ml-1-expert",
+    "source_id": "ml-1",
+    "topic": "ML / Data Science",
+    "level": "expert",
+    "text": "Why does the classical U-shaped bias-variance curve not fully describe large overparameterised networks?",
+    "options": [
+      "Bias and variance cannot be measured for neural networks",
+      "Test error can fall again past the interpolation threshold, a double descent the classical curve does not predict",
+      "Overparameterised models have zero variance by construction",
+      "The tradeoff applies only to regression, never to classification"
+    ],
+    "correct": 1,
+    "explanation": "You are pointing at double descent: as capacity grows past the point of exactly fitting the training data, test error can decrease a second time, which the single U-shaped picture does not account for."
+  },
+  {
+    "id": "ml-2-beginner",
+    "source_id": "ml-2",
+    "topic": "ML / Data Science",
+    "level": "beginner",
+    "text": "Fraud is 2% of your dataset and your classifier reports 98% accuracy. What should you check first?",
+    "options": [
+      "Whether it predicts the majority class every time",
+      "Whether the training set was shuffled",
+      "Whether the learning rate was too high",
+      "Whether the features were normalised"
+    ],
+    "correct": 0,
+    "explanation": "You spotted it: a model that always answers 'not fraud' scores 98% on this data while catching nothing, so accuracy alone cannot distinguish it from a useful model."
+  },
+  {
+    "id": "ml-2-advanced",
+    "source_id": "ml-2",
+    "topic": "ML / Data Science",
+    "level": "advanced",
+    "text": "Which metrics are appropriate for this imbalanced fraud problem?",
+    "options": [
+      "Precision, recall and the precision-recall curve",
+      "Accuracy and mean squared error",
+      "R squared and adjusted R squared",
+      "Training loss and epoch count"
+    ],
+    "correct": 0,
+    "explanation": "You chose metrics that focus on the rare positive class: precision and recall describe what happens on the 2% that matters, and the PR curve summarises the tradeoff across thresholds."
+  },
+  {
+    "id": "ml-2-expert",
+    "source_id": "ml-2",
+    "topic": "ML / Data Science",
+    "level": "expert",
+    "text": "Why is a precision-recall curve preferred over ROC-AUC under severe class imbalance?",
+    "options": [
+      "ROC-AUC cannot be computed when classes are imbalanced",
+      "The false positive rate has a huge negative denominator, so ROC stays optimistic while precision collapses",
+      "PR curves are invariant to the classification threshold",
+      "ROC-AUC only applies to multiclass problems"
+    ],
+    "correct": 1,
+    "explanation": "You identified the denominator effect: with negatives vastly outnumbering positives, many false positives barely move the false positive rate, so ROC looks strong while precision, which divides by predicted positives, shows the real cost."
+  },
+  {
+    "id": "ml-3-beginner",
+    "source_id": "ml-3",
+    "topic": "ML / Data Science",
+    "level": "beginner",
+    "text": "In k-fold cross validation, how is the data used?",
+    "options": [
+      "Split into k folds; each fold serves as validation once while the rest train",
+      "Split into k folds and the model is trained on one fold only",
+      "The same random 20% is held out k separate times",
+      "The model is trained k times on the entire dataset"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: every fold takes a turn as the validation set, so each observation is predicted exactly once by a model that never saw it in training."
+  },
+  {
+    "id": "ml-3-advanced",
+    "source_id": "ml-3",
+    "topic": "ML / Data Science",
+    "level": "advanced",
+    "text": "What is the main advantage of cross validation over a single train-test split?",
+    "options": [
+      "It guarantees the model will generalise to production data",
+      "It averages over k splits, giving a lower-variance estimate that does not hinge on one lucky partition",
+      "It eliminates the need for a separate test set entirely",
+      "It reduces training time by using less data per fold"
+    ],
+    "correct": 1,
+    "explanation": "You have the statistical point: one split can be unrepresentative by chance, and averaging across folds gives an estimate with less variance and a sense of its spread."
+  },
+  {
+    "id": "ml-3-expert",
+    "source_id": "ml-3",
+    "topic": "ML / Data Science",
+    "level": "expert",
+    "text": "Why is standard k-fold cross validation invalid for time series data?",
+    "options": [
+      "Time series data cannot be split into folds of equal size",
+      "Random folds let the model train on future observations and predict the past, leaking information",
+      "Time series models cannot be retrained multiple times",
+      "Cross validation requires the target variable to be categorical"
+    ],
+    "correct": 1,
+    "explanation": "You caught the leakage: shuffling destroys temporal order, so the model sees the future during training and the score no longer reflects forecasting, which is why forward-chaining splits are used instead."
+  },
+  {
+    "id": "bh-1-beginner",
+    "source_id": "bh-1",
+    "topic": "Behavioral",
+    "level": "beginner",
+    "text": "Which opening best answers 'tell me about a time you disagreed with a teammate'?",
+    "options": [
+      "A specific situation, what the disagreement was about, and what you did",
+      "A general statement that you always try to get along with everyone",
+      "An explanation of why the teammate was wrong",
+      "A description of how your team usually handles disagreements"
+    ],
+    "correct": 0,
+    "explanation": "You picked the concrete answer: behavioural questions ask for one real incident with your actions in it, not a policy or a character description."
+  },
+  {
+    "id": "bh-1-advanced",
+    "source_id": "bh-1",
+    "topic": "Behavioral",
+    "level": "advanced",
+    "text": "What do the four parts of the STAR structure stand for?",
+    "options": [
+      "Situation, Task, Action, Result",
+      "Story, Timing, Approach, Reflection",
+      "Setup, Tension, Answer, Review",
+      "Scope, Team, Analysis, Resolution"
+    ],
+    "correct": 0,
+    "explanation": "You have the standard frame: situation and task set the context, action is what you personally did, and result is what came of it."
+  },
+  {
+    "id": "bh-1-expert",
+    "source_id": "bh-1",
+    "topic": "Behavioral",
+    "level": "expert",
+    "text": "A disagreement answer describes the conflict and the outcome but never says what you personally did. Why is that weak?",
+    "options": [
+      "It is too short to fill the expected answer length",
+      "The Action step is where the interviewer assesses your judgement, so omitting it leaves nothing to evaluate",
+      "It implies the disagreement was not serious enough to discuss",
+      "It fails to demonstrate technical knowledge"
+    ],
+    "correct": 1,
+    "explanation": "You located the gap that matters: the interviewer is assessing your behaviour, so context and outcome without your own decisions and reasoning give them nothing about you."
+  },
+  {
+    "id": "bh-2-beginner",
+    "source_id": "bh-2",
+    "topic": "Behavioral",
+    "level": "beginner",
+    "text": "When asked about a project you are proud of, what must the answer make clear?",
+    "options": [
+      "Your specific individual contribution",
+      "The full technical architecture of the system",
+      "The names and roles of everyone on the team",
+      "The total revenue the project generated"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: the question asks what you did, so your own contribution has to be unmistakable within the team's work."
+  },
+  {
+    "id": "bh-2-advanced",
+    "source_id": "bh-2",
+    "topic": "Behavioral",
+    "level": "advanced",
+    "text": "Why does answering entirely in 'we' weaken this answer?",
+    "options": [
+      "It sounds insufficiently confident",
+      "It makes your individual contribution impossible to separate from the team's",
+      "It suggests the project was not technically difficult",
+      "Interviewers are instructed to reject collaborative language"
+    ],
+    "correct": 1,
+    "explanation": "You identified the real cost: 'we' describes the team's achievement, and the interviewer cannot score what they cannot attribute to you. Credit the team, then say what was yours."
+  },
+  {
+    "id": "bh-2-expert",
+    "source_id": "bh-2",
+    "topic": "Behavioral",
+    "level": "expert",
+    "text": "What most strengthens the Result step of a project answer?",
+    "options": [
+      "A statement that the project was well received by the team",
+      "A concrete measure of impact, such as a latency or error-rate change, and what you learned",
+      "A detailed list of every technology used",
+      "An explanation of what you would build differently with more time"
+    ],
+    "correct": 1,
+    "explanation": "You chose evidence over assertion: a measured outcome makes the impact verifiable rather than a claim, and the reflection shows you can evaluate your own work."
+  },
+  {
+    "id": "bh-3-beginner",
+    "source_id": "bh-3",
+    "topic": "Behavioral",
+    "level": "beginner",
+    "text": "What is the interviewer primarily looking for when asking about a failure?",
+    "options": [
+      "How you responded to it and what you took from it",
+      "Confirmation that you have never shipped a serious bug",
+      "Whether the failure was ultimately someone else's fault",
+      "How severe the technical failure was"
+    ],
+    "correct": 0,
+    "explanation": "You are correct: the question probes ownership and learning, so the response and the lesson matter more than the incident itself."
+  },
+  {
+    "id": "bh-3-advanced",
+    "source_id": "bh-3",
+    "topic": "Behavioral",
+    "level": "advanced",
+    "text": "Why is 'I do not really have an example of a failure' a poor answer?",
+    "options": [
+      "It reads as a lack of self-awareness or an unwillingness to take ownership",
+      "It is shorter than the expected answer length",
+      "It suggests you have not worked on enough projects",
+      "It implies your previous team had no quality process"
+    ],
+    "correct": 0,
+    "explanation": "You saw what it signals: everyone who ships has broken something, so claiming otherwise reads as either not noticing or not owning it, both worse than the failure would have been."
+  },
+  {
+    "id": "bh-3-expert",
+    "source_id": "bh-3",
+    "topic": "Behavioral",
+    "level": "expert",
+    "text": "A candidate describes an outage they caused and ends with the systemic fix they introduced afterwards. Why is this strong?",
+    "options": [
+      "It shifts responsibility from the individual to the system",
+      "It shows ownership plus a durable improvement, so the same class of failure cannot recur",
+      "It proves the original mistake was not really their fault",
+      "It demonstrates familiarity with incident tooling"
+    ],
+    "correct": 1,
+    "explanation": "You recognised the strongest shape: owning the mistake and then removing the conditions that allowed it shows you treat failures as system problems without evading your part in them."
+  }
+]
