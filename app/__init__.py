@@ -13,11 +13,15 @@ from src.constants.filepaths import LOG_DIR, LOG_FILE, ROOT
 truststore.inject_into_ssl()
 load_dotenv(ROOT / ".env.local")  # HF_TOKEN, read by huggingface_hub
 
+# Marks our file handler so a second setup_logging() is a no-op rather than a second copy
+# of every line. `Handler.name` is stdlib and survives uvicorn's reload.
+_HANDLER_NAME = "prepmate"
+
 
 def setup_logging(level=logging.INFO):
     """Log to logs/server.log and the console. Safe to call more than once."""
     root = logging.getLogger()
-    if any(getattr(h, "_practice", False) for h in root.handlers):
+    if any(h.name == _HANDLER_NAME for h in root.handlers):
         return LOG_FILE
 
     LOG_DIR.mkdir(exist_ok=True)
@@ -25,7 +29,7 @@ def setup_logging(level=logging.INFO):
     # ponytail: 5 x 2MB rotation, switch to TimedRotating if you want daily files
     handler = logging.handlers.RotatingFileHandler(path, maxBytes=2_000_000, backupCount=5)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)-22s %(message)s"))
-    handler._practice = True
+    handler.set_name(_HANDLER_NAME)
 
     root.setLevel(level)
     root.addHandler(handler)

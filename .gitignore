@@ -231,3 +231,6 @@ poc_mic.py
 data/*.db
 data/*.db-shm
 data/*.db-wal
+
+# Playwright MCP scratch output
+.playwright-mcp/

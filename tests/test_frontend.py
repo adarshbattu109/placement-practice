@@ -12,6 +12,17 @@ from src.constants.filepaths import INDEX_HTML
 TEMPLATED = re.compile(r"^(view|login|signup)-")
 
 
+def _const_list(html, name):
+    """The string entries of a `const <name> = [...]` array in index.html.
+
+    A missing const is the failure this file exists to catch, so it asserts rather than
+    returning empty — an empty list would pass every loop below without checking anything.
+    """
+    found = re.search(rf"const {name} = \[([^\]]+)\]", html)
+    assert found, f"index.html has no `const {name} = [...]`"
+    return re.findall(r"'([^']+)'", found.group(1))
+
+
 def check():
     html = INDEX_HTML.read_text()
     ids = set(re.findall(r'\bid="([^"]+)"', html))
@@ -21,8 +32,7 @@ def check():
     assert not missing, f"the script reaches for ids that do not exist: {sorted(missing)}"
 
     # Every view in VIEWS needs its section, and every wireAuth/data-go target its parts.
-    views = re.search(r"const VIEWS = \[([^\]]+)\]", html).group(1)
-    for view in re.findall(r"'([^']+)'", views):
+    for view in _const_list(html, "VIEWS"):
         assert f"view-{view}" in ids, f"VIEWS lists {view!r} but there is no #view-{view}"
     for form in ("login", "signup"):
         for part in (f"{form}-form", f"{form}-oops", f"{form}-go"):
@@ -31,15 +41,16 @@ def check():
         assert f"view-{target}" in ids, f'data-go="{target}" has no #view-{target}'
 
     # The gate list must name real views, or show() would leave the header wrong.
-    gates = re.search(r"const GATES = \[([^\]]+)\]", html).group(1)
-    for gate in re.findall(r"'([^']+)'", gates):
+    for gate in _const_list(html, "GATES"):
         assert f"view-{gate}" in ids, f"GATES lists {gate!r} but there is no #view-{gate}"
 
     # get()/post() are the helpers; fetch() is used directly where the body is a Blob.
     called = set(re.findall(r"""(?:get|post|fetch)\(\s*['"](/[^'"?]+)""", html))
     from app.main import app
 
-    served = {r.path for r in app.routes}
+    # getattr: Starlette's BaseRoute has no `.path`; anything without one cannot match a
+    # url starting with "/", so "" drops it from the comparison without hiding a route.
+    served = {getattr(r, "path", "") for r in app.routes}
     assert called <= served, (
         f"the frontend calls routes the server does not serve: {called - served}"
     )

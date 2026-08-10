@@ -1,5 +1,7 @@
 """Models, grading calibration and gate thresholds — the knobs worth tuning."""
 
+from typing import TypedDict
+
 # --- remote endpoints -----------------------------------------------------------
 # Every model call in the app resolves through this table — there is no model name and no
 # base url anywhere else. Each field is overridable per deployment by environment variable
@@ -26,7 +28,17 @@ ASR_LANGUAGE = "en"
 # whisper on identical bytes: 98.4% word match on a technical answer, and an empty transcript
 # at confidence 0.0 on three seconds of silence, where whisper hallucinates a sentence.
 DEEPGRAM_HOST = "api.deepgram.com"
-ENDPOINTS = {
+
+
+class Endpoint(TypedDict):
+    """The three fields every role's endpoint has, and the only three it may have."""
+
+    model: str
+    url: str
+    timeout: int
+
+
+ENDPOINTS: dict[str, Endpoint] = {
     # Timeouts are per role because the calls are nothing alike: ASR is ~3s on a minute of
     # speech, the judge is 20-60s, and Kokoro measured 72.9s for one sentence. All three
     # must stay under JOB_STALE_MINUTES below, or the watchdog re-queues live work.
@@ -115,7 +127,16 @@ PARAMETERS = ("completeness", "correctness", "relevance")
 # What each level is graded against, and how the three parameters are weighted for it.
 # Weights must sum to 1 — asserted at import, so a bad edit fails loudly.
 # ponytail: hand-set ratios, the calibration knob for the whole grader
-LEVELS = {
+
+
+class Level(TypedDict):
+    """Per-parameter weights, and the bar the judge grades this level against."""
+
+    weights: dict[str, float]
+    brief: str
+
+
+LEVELS: dict[str, Level] = {
     "beginner": {
         # Getting the fundamentals right matters most; breadth comes later.
         "weights": {"completeness": 0.20, "correctness": 0.55, "relevance": 0.25},

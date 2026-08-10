@@ -183,8 +183,13 @@ def demo():
 
         heard = "a hash map hashes the key to a bucket and collisions chain in that bucket"
         real_transcribe, real_evaluate = transcribe, evaluate
-        transcribe = lambda role, audio: heard
-        evaluate = lambda t, q, i, level: {"score": 64, "parameters": {}, "comments": {}}
+        # Stubbing both remote calls is the point; ty reads a rebind of a `def` as a type error.
+        transcribe = lambda role, audio: heard  # ty: ignore[invalid-assignment]
+        evaluate = lambda t, q, i, level: {  # ty: ignore[invalid-assignment]
+            "score": 64,
+            "parameters": {},
+            "comments": {},
+        }
         try:
             # Two jobs, two stages each: four steps, then the queue is empty.
             assert [step() for _ in range(5)] == [True, True, True, True, False]

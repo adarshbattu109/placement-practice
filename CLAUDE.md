@@ -81,9 +81,7 @@ needs a real reason; this one has three (below).
 
 ## Code Style
 
-- Python 3.14, type hints on route signatures and public helpers
-- Line length: 100 characters
-- Formatter/linter: Ruff (configured in pyproject.toml)
+- Type hints on route signatures and public helpers
 - Docstrings: one-line summary on modules and public functions
 - Comments: only when the "why" is non-obvious — never describe what the code does
 - Mark deliberate simplifications with a `ponytail:` comment naming the ceiling and the
