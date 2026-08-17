@@ -13,7 +13,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "soundfile>=0.14.0",
     "truststore>=0.10.4",
-    "uvicorn[standard]>=0.52.1",
+    "uvicorn[standard]>=0.52.3",
 ]
 
 [project.scripts]
