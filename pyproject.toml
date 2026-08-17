@@ -40,7 +40,7 @@ packages = ["app", "src"]
 
 [dependency-groups]
 dev = [
-    "httpx2>=2.9.1",     # starlette TestClient
+    "httpx2>=2.10.0",     # starlette TestClient
     "ruff>=0.16.2",
     "sounddevice>=0.5.5",  # poc_mic.py only; the app records in the browser
 ]
